@@ -17,17 +17,20 @@ try {
 }
 
 export function createAppServer(options = {}) {
+  return createServer(createRequestHandler(options));
+}
+
+export function createRequestHandler(options = {}) {
   const publicDir = options.publicDir ?? defaultPublicDir;
-  const database = options.database ?? createDatabase(options.databaseOptions);
-  const songSearch = options.songSearch ?? ((query) => searchExternalSongs(query, options.songSearchOptions));
+  const apiHandler = createApiHandler(options);
   const logger = options.logger ?? console;
 
-  return createServer(async (request, response) => {
+  return async function requestHandler(request, response) {
     try {
-      const requestUrl = new URL(request.url ?? "/", "http://localhost");
+      const requestUrl = createRequestUrl(request);
 
       if (requestUrl.pathname.startsWith("/api/")) {
-        await handleApiRequest(request, response, requestUrl, database, songSearch);
+        await apiHandler(request, response, requestUrl);
         return;
       }
 
@@ -38,7 +41,37 @@ export function createAppServer(options = {}) {
         error: error.statusCode ? error.message : "서버에서 문제가 생겼어요."
       });
     }
-  });
+  };
+}
+
+export function createApiHandler(options = {}) {
+  const database = options.database ?? createDatabase(options.databaseOptions);
+  const songSearch = options.songSearch ?? ((query) => searchExternalSongs(query, options.songSearchOptions));
+  const logger = options.logger ?? console;
+
+  return async function apiHandler(request, response, providedUrl) {
+    try {
+      const requestUrl = providedUrl ?? createRequestUrl(request);
+      await handleApiRequest(request, response, requestUrl, database, songSearch);
+    } catch (error) {
+      logger.error(error);
+      sendJson(response, error.statusCode ?? 500, {
+        error: error.statusCode ? error.message : "서버에서 문제가 생겼어요."
+      });
+    }
+  };
+}
+
+function createRequestUrl(request) {
+  const requestUrl = new URL(request.url ?? "/", "http://localhost");
+  const rewrittenPath = requestUrl.searchParams.get("path");
+
+  if ((requestUrl.pathname === "/api/index.js" || requestUrl.pathname === "/api") && rewrittenPath) {
+    requestUrl.pathname = `/api/${rewrittenPath.replace(/^\/+/, "")}`;
+    requestUrl.searchParams.delete("path");
+  }
+
+  return requestUrl;
 }
 
 async function handleApiRequest(request, response, requestUrl, database, songSearch) {

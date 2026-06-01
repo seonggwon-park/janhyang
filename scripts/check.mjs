@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
-const directories = ["src", "public", "scripts", "test"];
+const directories = ["api", "src", "public", "scripts", "test"];
 const files = [];
 
 for (const directory of directories) {

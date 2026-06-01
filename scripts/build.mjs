@@ -9,7 +9,7 @@ const dist = path.join(root, "dist");
 await rm(dist, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });
 
-for (const directory of ["src", "public", "supabase"]) {
+for (const directory of ["api", "src", "public", "supabase"]) {
   await cp(path.join(root, directory), path.join(dist, directory), {
     recursive: true
   });

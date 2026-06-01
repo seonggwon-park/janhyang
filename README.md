@@ -46,6 +46,20 @@ npm run dev
 
 기본 주소는 `http://localhost:3000`입니다. 포트를 바꾸려면 `PORT=4000 npm run dev`처럼 실행합니다.
 
+## Vercel 배포
+
+`api/index.js`가 Vercel 서버리스 함수 진입점입니다. `src/server.js`는 로컬 개발 서버를 시작할 때만 `listen()`을 호출하고, Vercel에서는 기본 export 함수가 요청을 처리합니다.
+
+Vercel 프로젝트 환경 변수에 아래 값을 설정하세요.
+
+```bash
+SUPABASE_URL
+SUPABASE_ANON_KEY
+SUPABASE_SERVICE_ROLE_KEY
+```
+
+Vercel 설정에서 `src/server.js` 또는 `src/server.mjs`를 함수 진입점으로 직접 지정하지 마세요. 이 프로젝트는 `vercel.json`의 rewrite로 `/api/*` 요청을 `api/index.js`에 연결하고, `/logs/*` 같은 프론트엔드 경로는 `public/index.html`로 되돌립니다.
+
 ## 확인
 
 ```bash

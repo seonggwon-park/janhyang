@@ -1,0 +1,16 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/api/index.js?path=:path*"
+    },
+    {
+      "source": "/logs",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/logs/:path*",
+      "destination": "/index.html"
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
+import vercelHandler from "../api/index.js";
 import { createDatabase } from "../src/db.js";
 import { createAppServer } from "../src/server.js";
 import { normalizeItunesTrack } from "../src/songSearch.js";
@@ -77,6 +78,15 @@ test("external song search endpoint returns normalized song results", async () =
   assert.equal(body.songs.length, 1);
   assert.equal(body.songs[0].title, "Ditto");
   assert.equal(body.songs[0].externalSource, "itunes");
+});
+
+test("Vercel entrypoint exports a default handler and supports rewritten API paths", async () => {
+  assert.equal(typeof vercelHandler, "function");
+
+  const body = await request("/api/index.js?path=songs/search&q=ditto");
+
+  assert.equal(body.songs.length, 1);
+  assert.equal(body.songs[0].title, "Ditto");
 });
 
 test("creates and reads a music log with a manual song", async () => {
