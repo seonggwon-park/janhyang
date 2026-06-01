@@ -1,0 +1,18 @@
+{
+  "name": "janhyang",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "감정으로 남기는 음악 기록장",
+  "scripts": {
+    "dev": "node src/server.js",
+    "start": "node src/server.js",
+    "build": "node scripts/build.mjs",
+    "lint": "node scripts/lint.mjs",
+    "typecheck": "node scripts/check.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
