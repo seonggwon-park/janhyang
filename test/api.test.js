@@ -1,23 +1,21 @@
 import assert from "node:assert/strict";
-import { copyFile, mkdtemp } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { after, before, test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { createDatabase } from "../src/db.js";
 import { createAppServer } from "../src/server.js";
 import { normalizeItunesTrack } from "../src/songSearch.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(__dirname, "..");
-const tempDir = await mkdtemp(path.join(os.tmpdir(), "janhyang-"));
 let server;
 let baseUrl;
 let searchCalls = 0;
 
 before(async () => {
-  await copyFile(path.join(root, "data", "db.seed.json"), path.join(tempDir, "db.seed.json"));
+  const supabase = createMockSupabase();
   server = createAppServer({
-    databaseOptions: { dataDir: tempDir },
+    databaseOptions: {
+      fetchImpl: supabase.fetch,
+      supabaseKey: "test-key",
+      supabaseUrl: "https://example.supabase.co"
+    },
     logger: { error() {} },
     songSearch: async (query) => {
       searchCalls += 1;
@@ -33,7 +31,7 @@ after(async () => {
   await new Promise((resolve) => server.close(resolve));
 });
 
-test("starts with no placeholder seed songs", async () => {
+test("starts with no saved songs", async () => {
   const body = await request("/api/songs");
 
   assert.deepEqual(body.songs, []);
@@ -105,7 +103,7 @@ test("creates and reads a music log with a manual song", async () => {
   assert.equal(detail.log.note, "느리게 가라앉는 마음이 남았다.");
 });
 
-test("creating logs with the same external song reuses the local song", async () => {
+test("creating logs with the same external song reuses the Supabase song row", async () => {
   const first = await createExternalLog("처음 들은 장면이 선명했다.");
   const second = await createExternalLog("다시 들어도 같은 온도가 남았다.");
 
@@ -114,6 +112,25 @@ test("creating logs with the same external song reuses the local song", async ()
   assert.equal(first.log.song.externalId, "1658078988");
   assert.equal(first.log.song.albumName, "OMG - Single");
   assert.equal(first.log.song.coverImageUrl, "https://example.com/cover.jpg");
+});
+
+test("returns a clear error when Supabase env vars are missing", async () => {
+  const badServer = createAppServer({
+    database: createDatabase({ supabaseKey: "", supabaseUrl: "" }),
+    logger: { error() {} }
+  });
+
+  await new Promise((resolve) => badServer.listen(0, "127.0.0.1", resolve));
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${badServer.address().port}/api/songs`);
+    const body = await response.json();
+
+    assert.equal(response.status, 500);
+    assert.match(body.error, /Supabase 환경 변수/);
+  } finally {
+    await new Promise((resolve) => badServer.close(resolve));
+  }
 });
 
 test("rejects logs without emotions", async () => {
@@ -142,6 +159,95 @@ async function createExternalLog(note) {
       note
     })
   });
+}
+
+function createMockSupabase() {
+  const state = {
+    logs: [],
+    nextLogId: 1,
+    nextSongId: 1,
+    songs: []
+  };
+
+  return {
+    fetch: async (input, options = {}) => {
+      const requestUrl = new URL(String(input));
+      const table = requestUrl.pathname.split("/").pop();
+
+      if (options.method === "POST" && table === "songs") {
+        const rows = JSON.parse(options.body).map((song) => {
+          const now = new Date().toISOString();
+          const row = {
+            id: `00000000-0000-4000-8000-${String(state.nextSongId++).padStart(12, "0")}`,
+            created_at: now,
+            updated_at: now,
+            ...song
+          };
+          state.songs.push(row);
+          return row;
+        });
+
+        return jsonResponse(rows);
+      }
+
+      if (options.method === "POST" && table === "music_logs") {
+        const rows = JSON.parse(options.body).map((log) => {
+          const now = new Date().toISOString();
+          const row = {
+            id: `10000000-0000-4000-8000-${String(state.nextLogId++).padStart(12, "0")}`,
+            created_at: now,
+            updated_at: now,
+            ...log
+          };
+          state.logs.push(row);
+          return row;
+        });
+
+        return jsonResponse(rows);
+      }
+
+      if (table === "songs") {
+        return jsonResponse(applyFilters(state.songs, requestUrl));
+      }
+
+      if (table === "music_logs") {
+        const rows = applyFilters(state.logs, requestUrl).map((log) => ({
+          ...log,
+          songs: state.songs.find((song) => song.id === log.song_id) ?? null
+        }));
+
+        return jsonResponse(rows);
+      }
+
+      return jsonResponse({ error: "not found" }, 404);
+    }
+  };
+}
+
+function applyFilters(rows, requestUrl) {
+  let filtered = [...rows];
+
+  for (const [key, value] of requestUrl.searchParams.entries()) {
+    if (["select", "order", "limit", "or"].includes(key)) {
+      continue;
+    }
+
+    if (value.startsWith("eq.")) {
+      const expected = value.slice(3);
+      filtered = filtered.filter((row) => String(row[key] ?? "") === expected);
+    }
+  }
+
+  const limit = Number.parseInt(requestUrl.searchParams.get("limit"), 10);
+  return Number.isFinite(limit) ? filtered.slice(0, limit) : filtered;
+}
+
+function jsonResponse(body, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body
+  };
 }
 
 function externalSong() {

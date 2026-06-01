@@ -10,6 +10,12 @@ const projectRoot = path.resolve(__dirname, "..");
 const defaultPublicDir = path.join(projectRoot, "public");
 const defaultPort = 3000;
 
+try {
+  process.loadEnvFile(path.join(projectRoot, ".env"));
+} catch {
+  // A checked-in .env file is optional; deployed environments usually provide vars directly.
+}
+
 export function createAppServer(options = {}) {
   const publicDir = options.publicDir ?? defaultPublicDir;
   const database = options.database ?? createDatabase(options.databaseOptions);

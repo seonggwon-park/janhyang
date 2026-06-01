@@ -1,10 +1,3 @@
-import crypto from "node:crypto";
-import { access, copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const projectRoot = path.resolve(__dirname, "..");
 const maxNoteLength = 240;
 const maxEmotionCount = 3;
 
@@ -20,69 +13,48 @@ export const emotions = [
 ];
 
 export function createDatabase(options = {}) {
-  const dataDir = options.dataDir ?? process.env.JANHYANG_DATA_DIR ?? path.join(projectRoot, "data");
-  const dbPath = options.dbPath ?? process.env.JANHYANG_DB_PATH ?? path.join(dataDir, "db.json");
-  const seedPath = options.seedPath ?? path.join(dataDir, "db.seed.json");
-
-  async function ensureDatabase() {
-    await mkdir(path.dirname(dbPath), { recursive: true });
-
-    if (await exists(dbPath)) {
-      return;
-    }
-
-    if (await exists(seedPath)) {
-      await copyFile(seedPath, dbPath);
-      return;
-    }
-
-    await writeJson(dbPath, { songs: [], logs: [] });
-  }
-
-  async function readDatabase() {
-    await ensureDatabase();
-    const raw = await readFile(dbPath, "utf8");
-    const parsed = JSON.parse(raw);
-
-    return {
-      songs: Array.isArray(parsed.songs) ? parsed.songs : [],
-      logs: Array.isArray(parsed.logs) ? parsed.logs : []
-    };
-  }
-
-  async function writeDatabase(database) {
-    await mkdir(path.dirname(dbPath), { recursive: true });
-    const tempPath = `${dbPath}.${process.pid}.${Date.now()}.tmp`;
-    await writeJson(tempPath, database);
-    await rename(tempPath, dbPath);
-  }
+  const config = createSupabaseConfig(options);
 
   async function listSongs(query = "") {
-    const database = await readDatabase();
-    const normalizedQuery = normalize(query);
-    const songs = normalizedQuery
-      ? database.songs.filter((song) => songMatches(song, normalizedQuery))
-      : database.songs;
+    const requestUrl = supabaseUrl(config, "songs");
+    requestUrl.searchParams.set("select", "*");
+    requestUrl.searchParams.set("order", "created_at.desc");
+    requestUrl.searchParams.set("limit", "12");
 
-    return songs.slice(0, 12).map(publicSong);
+    const normalizedQuery = normalize(query);
+
+    if (normalizedQuery) {
+      const escapedQuery = escapePostgrestPattern(normalizedQuery);
+      requestUrl.searchParams.set(
+        "or",
+        `(title.ilike.*${escapedQuery}*,artist.ilike.*${escapedQuery}*,album_name.ilike.*${escapedQuery}*)`
+      );
+    }
+
+    const songs = await supabaseRequest(config, requestUrl);
+    return songs.map(publicSong);
   }
 
   async function listLogs() {
-    const database = await readDatabase();
-    return database.logs
-      .map((log) => hydrateLog(log, database.songs))
-      .filter(Boolean)
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    const requestUrl = supabaseUrl(config, "music_logs");
+    requestUrl.searchParams.set("select", "*,songs(*)");
+    requestUrl.searchParams.set("order", "created_at.desc");
+
+    const logs = await supabaseRequest(config, requestUrl);
+    return logs.map(hydrateLog).filter(Boolean);
   }
 
   async function getLog(id) {
-    const database = await readDatabase();
-    const log = database.logs.find((item) => item.id === id);
-    return log ? hydrateLog(log, database.songs) : null;
+    const requestUrl = supabaseUrl(config, "music_logs");
+    requestUrl.searchParams.set("select", "*,songs(*)");
+    requestUrl.searchParams.set("id", `eq.${id}`);
+    requestUrl.searchParams.set("limit", "1");
+
+    const logs = await supabaseRequest(config, requestUrl);
+    return logs[0] ? hydrateLog(logs[0]) : null;
   }
 
   async function createLog(input) {
-    const database = await readDatabase();
     const emotionIds = normalizeEmotionIds(input?.emotionIds);
     const note = cleanText(input?.note);
     const listenedAt = normalizeDate(input?.listenedAt);
@@ -103,141 +75,231 @@ export function createDatabase(options = {}) {
       throw validationError(`메모는 ${maxNoteLength}자 이내로 남겨 주세요.`);
     }
 
-    const song = resolveSong(database, input);
-    const now = new Date().toISOString();
-    const log = {
-      id: `log_${crypto.randomUUID()}`,
-      songId: song.id,
-      emotionIds,
+    const song = await resolveSong(config, input);
+    const logRows = await insertRows(config, "music_logs", [{
+      song_id: song.id,
+      emotions: emotionIds,
       note,
-      listenedAt,
-      createdAt: now,
-      updatedAt: now
-    };
+      listened_at: listenedAt
+    }]);
 
-    database.logs.push(log);
-    await writeDatabase(database);
-    return hydrateLog(log, database.songs);
+    return hydrateLog({ ...logRows[0], songs: song });
   }
 
   return {
     createLog,
     getLog,
     listLogs,
-    listSongs,
-    paths: { dataDir, dbPath, seedPath }
+    listSongs
   };
 }
 
-function resolveSong(database, input) {
+async function resolveSong(config, input) {
   const requestedId = cleanText(input?.songId);
-  const existingById = requestedId ? database.songs.find((song) => song.id === requestedId) : null;
 
-  if (existingById) {
-    return existingById;
+  if (requestedId) {
+    const existingById = await findSong(config, { id: requestedId });
+
+    if (existingById) {
+      return existingById;
+    }
   }
 
-  const manualSong = input?.song ?? {};
-  const title = cleanText(manualSong.title);
-  const artist = cleanText(manualSong.artist);
-  const albumName = cleanText(manualSong.albumName ?? manualSong.album);
-  const parsedYear = Number.parseInt(manualSong.releaseYear ?? manualSong.year, 10);
-  const year = Number.isFinite(parsedYear) ? parsedYear : null;
-  const externalSource = cleanText(manualSong.externalSource);
-  const externalId = cleanText(manualSong.externalId);
+  const inputSong = input?.song ?? {};
+  const title = cleanText(inputSong.title);
+  const artist = cleanText(inputSong.artist);
+  const albumName = cleanText(inputSong.albumName ?? inputSong.album);
+  const releaseYear = normalizeYear(inputSong.releaseYear ?? inputSong.year);
+  const externalSource = cleanText(inputSong.externalSource);
+  const externalId = cleanText(inputSong.externalId);
 
   if (!title || !artist) {
     throw validationError("곡 제목과 아티스트를 입력해 주세요.");
   }
 
   if (externalSource && externalId) {
-    const existingByExternalId = database.songs.find((song) => {
-      return song.externalSource === externalSource && song.externalId === externalId;
+    const existingByExternalId = await findSong(config, {
+      external_source: externalSource,
+      external_id: externalId
     });
 
     if (existingByExternalId) {
       return existingByExternalId;
     }
 
-    const song = {
-      id: `song_${crypto.randomUUID()}`,
+    return insertSong(config, {
       title,
       artist,
-      albumName,
-      coverImageUrl: cleanText(manualSong.coverImageUrl),
-      externalId,
-      externalSource,
-      previewUrl: cleanText(manualSong.previewUrl),
-      releaseYear: year,
-      source: externalSource
-    };
-
-    database.songs.push(song);
-    return song;
+      album_name: emptyToNull(albumName),
+      cover_image_url: emptyToNull(inputSong.coverImageUrl),
+      external_id: externalId,
+      external_source: externalSource,
+      release_year: releaseYear
+    });
   }
 
-  const existingByName = database.songs.find((song) => {
-    return normalize(song.title) === normalize(title) && normalize(song.artist) === normalize(artist);
+  const existingByName = await findSong(config, {
+    title,
+    artist
   });
 
   if (existingByName) {
     return existingByName;
   }
 
-  const song = {
-    id: `song_${crypto.randomUUID()}`,
+  return insertSong(config, {
     title,
     artist,
-    album: albumName,
-    year,
-    externalSource: "manual",
-    source: "manual"
-  };
-
-  database.songs.push(song);
-  return song;
+    album_name: emptyToNull(albumName),
+    cover_image_url: null,
+    external_id: null,
+    external_source: "manual",
+    release_year: releaseYear
+  });
 }
 
-function hydrateLog(log, songs) {
-  const song = songs.find((item) => item.id === log.songId);
+async function insertSong(config, song) {
+  try {
+    const rows = await insertRows(config, "songs", [song]);
+    return rows[0];
+  } catch (error) {
+    if (song.external_source && song.external_id) {
+      const existingByExternalId = await findSong(config, {
+        external_source: song.external_source,
+        external_id: song.external_id
+      });
 
-  if (!song) {
+      if (existingByExternalId) {
+        return existingByExternalId;
+      }
+    }
+
+    throw error;
+  }
+}
+
+async function findSong(config, filters) {
+  const requestUrl = supabaseUrl(config, "songs");
+  requestUrl.searchParams.set("select", "*");
+  requestUrl.searchParams.set("limit", "1");
+
+  for (const [key, value] of Object.entries(filters)) {
+    requestUrl.searchParams.set(key, `eq.${value}`);
+  }
+
+  const songs = await supabaseRequest(config, requestUrl);
+  return songs[0] ?? null;
+}
+
+async function insertRows(config, table, rows) {
+  const requestUrl = supabaseUrl(config, table);
+  return supabaseRequest(config, requestUrl, {
+    body: JSON.stringify(rows),
+    headers: { Prefer: "return=representation" },
+    method: "POST"
+  });
+}
+
+function hydrateLog(row) {
+  if (!row?.songs) {
     return null;
   }
 
+  const emotionIds = Array.isArray(row.emotions) ? row.emotions : [];
+
   return {
-    ...log,
-    emotions: log.emotionIds
+    id: row.id,
+    songId: row.song_id,
+    emotionIds,
+    emotions: emotionIds
       .map((id) => emotions.find((emotion) => emotion.id === id))
       .filter(Boolean),
-    song: publicSong(song)
+    note: row.note,
+    listenedAt: row.listened_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    song: publicSong(row.songs)
   };
 }
 
-function publicSong(song) {
-  const albumName = song.albumName ?? song.album ?? "";
-  const releaseYear = song.releaseYear ?? song.year ?? null;
+function publicSong(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    artist: row.artist,
+    album: row.album_name ?? "",
+    albumName: row.album_name ?? "",
+    coverImageUrl: row.cover_image_url ?? "",
+    externalId: row.external_id ?? "",
+    externalSource: row.external_source ?? "manual",
+    previewUrl: "",
+    releaseYear: row.release_year ?? null,
+    year: row.release_year ?? null,
+    source: row.external_source ?? "manual"
+  };
+}
+
+function createSupabaseConfig(options) {
+  const url = cleanText(options.supabaseUrl ?? process.env.SUPABASE_URL);
+  const key = cleanText(
+    options.supabaseKey ??
+      options.supabaseServiceRoleKey ??
+      process.env.SUPABASE_SERVICE_ROLE_KEY ??
+      options.supabaseAnonKey ??
+      process.env.SUPABASE_ANON_KEY
+  );
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+
+  if (!url || !key || typeof fetchImpl !== "function") {
+    return {
+      error: configurationError(
+        "Supabase 환경 변수가 설정되지 않았어요. SUPABASE_URL과 SUPABASE_SERVICE_ROLE_KEY 또는 SUPABASE_ANON_KEY를 확인해 주세요."
+      )
+    };
+  }
 
   return {
-    id: song.id,
-    title: song.title,
-    artist: song.artist,
-    album: albumName,
-    albumName,
-    coverImageUrl: song.coverImageUrl ?? "",
-    externalId: song.externalId ?? "",
-    externalSource: song.externalSource ?? song.source ?? "manual",
-    previewUrl: song.previewUrl ?? "",
-    releaseYear,
-    year: releaseYear,
-    source: song.source ?? song.externalSource ?? "manual"
+    fetchImpl,
+    key,
+    url: url.replace(/\/$/, "")
   };
 }
 
-function songMatches(song, normalizedQuery) {
-  return [song.title, song.artist, song.albumName, song.album, song.releaseYear, song.year]
-    .map(normalize)
-    .some((value) => value.includes(normalizedQuery));
+function supabaseUrl(config, table) {
+  assertConfigured(config);
+  return new URL(`${config.url}/rest/v1/${table}`);
+}
+
+async function supabaseRequest(config, requestUrl, options = {}) {
+  assertConfigured(config);
+
+  const response = await config.fetchImpl(requestUrl, {
+    ...options,
+    headers: {
+      apikey: config.key,
+      Authorization: `Bearer ${config.key}`,
+      "Content-Type": "application/json",
+      ...options.headers
+    }
+  });
+
+  if (!response.ok) {
+    const error = new Error("Supabase 요청을 처리하지 못했어요.");
+    error.statusCode = 500;
+    throw error;
+  }
+
+  if (response.status === 204) {
+    return [];
+  }
+
+  return response.json();
+}
+
+function assertConfigured(config) {
+  if (config.error) {
+    throw config.error;
+  }
 }
 
 function normalizeEmotionIds(ids) {
@@ -271,6 +333,16 @@ function normalizeDate(value) {
   return new Date().toISOString().slice(0, 10);
 }
 
+function normalizeYear(value) {
+  const year = Number.parseInt(value, 10);
+  return Number.isFinite(year) ? year : null;
+}
+
+function emptyToNull(value) {
+  const text = cleanText(value);
+  return text || null;
+}
+
 function cleanText(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
@@ -279,21 +351,18 @@ function normalize(value) {
   return cleanText(value).normalize("NFKC").toLocaleLowerCase("ko-KR");
 }
 
+function escapePostgrestPattern(value) {
+  return normalize(value).replace(/[*,()]/g, " ");
+}
+
 function validationError(message) {
   const error = new Error(message);
   error.statusCode = 400;
   return error;
 }
 
-async function exists(filePath) {
-  try {
-    await access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function writeJson(filePath, data) {
-  await writeFile(filePath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+function configurationError(message) {
+  const error = new Error(message);
+  error.statusCode = 500;
+  return error;
 }
