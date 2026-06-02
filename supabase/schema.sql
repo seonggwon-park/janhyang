@@ -19,6 +19,7 @@ create unique index if not exists songs_external_source_id_unique
 
 create table if not exists public.music_logs (
   id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
   song_id uuid not null references public.songs(id) on delete cascade,
   emotions text[] not null,
   note text not null,
@@ -27,11 +28,27 @@ create table if not exists public.music_logs (
   updated_at timestamptz not null default now()
 );
 
+alter table public.music_logs
+  add column if not exists user_id uuid references auth.users(id) on delete cascade;
+
+do $$
+begin
+  if exists (select 1 from public.music_logs where user_id is null) then
+    raise notice 'music_logs has legacy rows without user_id. They remain inaccessible under RLS until manually assigned or removed.';
+  else
+    alter table public.music_logs alter column user_id set not null;
+  end if;
+end;
+$$;
+
 create index if not exists music_logs_created_at_idx
   on public.music_logs (created_at desc);
 
 create index if not exists music_logs_song_id_idx
   on public.music_logs (song_id);
+
+create index if not exists music_logs_user_created_at_idx
+  on public.music_logs (user_id, created_at desc);
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -52,3 +69,34 @@ drop trigger if exists music_logs_set_updated_at on public.music_logs;
 create trigger music_logs_set_updated_at
 before update on public.music_logs
 for each row execute function public.set_updated_at();
+
+alter table public.music_logs enable row level security;
+
+drop policy if exists music_logs_select_own on public.music_logs;
+create policy music_logs_select_own
+on public.music_logs
+for select
+to authenticated
+using (user_id = auth.uid());
+
+drop policy if exists music_logs_insert_own on public.music_logs;
+create policy music_logs_insert_own
+on public.music_logs
+for insert
+to authenticated
+with check (user_id = auth.uid());
+
+drop policy if exists music_logs_update_own on public.music_logs;
+create policy music_logs_update_own
+on public.music_logs
+for update
+to authenticated
+using (user_id = auth.uid())
+with check (user_id = auth.uid());
+
+drop policy if exists music_logs_delete_own on public.music_logs;
+create policy music_logs_delete_own
+on public.music_logs
+for delete
+to authenticated
+using (user_id = auth.uid());

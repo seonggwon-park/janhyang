@@ -35,26 +35,28 @@ export function createDatabase(options = {}) {
     return songs.map(publicSong);
   }
 
-  async function listLogs() {
+  async function listLogs(user) {
     const requestUrl = supabaseUrl(config, "music_logs");
     requestUrl.searchParams.set("select", "*,songs(*)");
+    requestUrl.searchParams.set("user_id", `eq.${user.id}`);
     requestUrl.searchParams.set("order", "created_at.desc");
 
     const logs = await supabaseRequest(config, requestUrl);
     return logs.map(hydrateLog).filter(Boolean);
   }
 
-  async function getLog(id) {
+  async function getLog(id, user) {
     const requestUrl = supabaseUrl(config, "music_logs");
     requestUrl.searchParams.set("select", "*,songs(*)");
     requestUrl.searchParams.set("id", `eq.${id}`);
+    requestUrl.searchParams.set("user_id", `eq.${user.id}`);
     requestUrl.searchParams.set("limit", "1");
 
     const logs = await supabaseRequest(config, requestUrl);
     return logs[0] ? hydrateLog(logs[0]) : null;
   }
 
-  async function createLog(input) {
+  async function createLog(input, user) {
     const emotionIds = normalizeEmotionIds(input?.emotionIds);
     const note = cleanText(input?.note);
     const listenedAt = normalizeDate(input?.listenedAt);
@@ -78,6 +80,7 @@ export function createDatabase(options = {}) {
     const song = await resolveSong(config, input);
     const logRows = await insertRows(config, "music_logs", [{
       song_id: song.id,
+      user_id: user.id,
       emotions: emotionIds,
       note,
       listened_at: listenedAt
@@ -86,11 +89,70 @@ export function createDatabase(options = {}) {
     return hydrateLog({ ...logRows[0], songs: song });
   }
 
+  async function updateLog(id, input, user) {
+    const current = await getLog(id, user);
+
+    if (!current) {
+      return null;
+    }
+
+    const emotionIds = input?.emotionIds ? normalizeEmotionIds(input.emotionIds) : current.emotionIds;
+    const note = input?.note === undefined ? current.note : cleanText(input.note);
+    const listenedAt = input?.listenedAt === undefined ? current.listenedAt : normalizeDate(input.listenedAt);
+
+    if (!emotionIds.length) {
+      throw validationError("감정을 하나 이상 선택해 주세요.");
+    }
+
+    if (emotionIds.length > maxEmotionCount) {
+      throw validationError(`감정은 최대 ${maxEmotionCount}개까지 선택할 수 있어요.`);
+    }
+
+    if (!note) {
+      throw validationError("곡이 남긴 감정을 짧게 적어 주세요.");
+    }
+
+    if (note.length > maxNoteLength) {
+      throw validationError(`메모는 ${maxNoteLength}자 이내로 남겨 주세요.`);
+    }
+
+    const requestUrl = supabaseUrl(config, "music_logs");
+    requestUrl.searchParams.set("id", `eq.${id}`);
+    requestUrl.searchParams.set("user_id", `eq.${user.id}`);
+
+    await supabaseRequest(config, requestUrl, {
+      body: JSON.stringify({
+        emotions: emotionIds,
+        note,
+        listened_at: listenedAt
+      }),
+      headers: { Prefer: "return=representation" },
+      method: "PATCH"
+    });
+
+    return getLog(id, user);
+  }
+
+  async function deleteLog(id, user) {
+    const requestUrl = supabaseUrl(config, "music_logs");
+    requestUrl.searchParams.set("id", `eq.${id}`);
+    requestUrl.searchParams.set("user_id", `eq.${user.id}`);
+
+    const rows = await supabaseRequest(config, requestUrl, {
+      headers: { Prefer: "return=representation" },
+      method: "DELETE"
+    });
+
+    return rows.length > 0;
+  }
+
   return {
     createLog,
+    deleteLog,
     getLog,
     listLogs,
-    listSongs
+    listSongs,
+    updateLog
   };
 }
 
@@ -210,6 +272,7 @@ function hydrateLog(row) {
   return {
     id: row.id,
     songId: row.song_id,
+    userId: row.user_id,
     emotionIds,
     emotions: emotionIds
       .map((id) => emotions.find((emotion) => emotion.id === id))

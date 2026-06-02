@@ -1,10 +1,23 @@
 const app = document.querySelector("#app");
-const navLinks = [...document.querySelectorAll("nav a")];
+const nav = document.querySelector("nav");
 const maxEmotionCount = 3;
 const minSongSearchLength = 2;
-let emotions = [];
+const authStorageKey = "janhyang.auth";
 
-document.addEventListener("click", (event) => {
+let emotions = [];
+let authSession = readStoredSession();
+let currentUser = authSession?.user ?? null;
+let navLinks = [];
+
+document.addEventListener("click", async (event) => {
+  const logoutButton = event.target.closest("button[data-logout]");
+
+  if (logoutButton) {
+    event.preventDefault();
+    await logout();
+    return;
+  }
+
   const link = event.target.closest("a[data-link]");
 
   if (!link) {
@@ -20,18 +33,42 @@ window.addEventListener("popstate", renderRoute);
 init();
 
 async function init() {
+  renderNavigation();
   app.innerHTML = `<div class="loading">불러오는 중</div>`;
-  const response = await api("/api/emotions");
-  emotions = response.emotions;
-  await renderRoute();
+
+  try {
+    const response = await api("/api/emotions");
+    emotions = response.emotions;
+    await loadCurrentUser();
+    renderNavigation();
+    await renderRoute();
+  } catch (error) {
+    app.innerHTML = renderEmpty(error.message);
+  }
 }
 
 async function renderRoute() {
   const pathname = window.location.pathname;
+  const detailMatch = pathname.match(/^\/logs\/([^/]+)$/);
   setCurrentNav(pathname);
 
   if (pathname === "/") {
     await renderHome();
+    return;
+  }
+
+  if (pathname === "/login") {
+    renderAuthPage("login");
+    return;
+  }
+
+  if (pathname === "/signup") {
+    renderAuthPage("signup");
+    return;
+  }
+
+  if (!currentUser && (pathname === "/logs/new" || pathname === "/logs" || detailMatch)) {
+    renderAuthPrompt();
     return;
   }
 
@@ -44,8 +81,6 @@ async function renderRoute() {
     await renderLogs();
     return;
   }
-
-  const detailMatch = pathname.match(/^\/logs\/([^/]+)$/);
 
   if (detailMatch) {
     await renderLogDetail(decodeURIComponent(detailMatch[1]));
@@ -63,7 +98,7 @@ async function renderRoute() {
 }
 
 async function renderHome() {
-  const { logs } = await api("/api/logs");
+  const logs = currentUser ? (await api("/api/logs")).logs : [];
   const recentLogs = logs.slice(0, 3);
   const uniqueSongCount = new Set(logs.map((log) => log.song.id)).size;
   const emotionCount = logs.reduce((total, log) => total + log.emotions.length, 0);
@@ -83,18 +118,96 @@ async function renderHome() {
           <a class="button" href="/logs/new" data-link>잔향 남기기</a>
           <a class="ghost-button" href="/logs" data-link>내 잔향 보기</a>
         </div>
+        ${currentUser ? "" : renderHomeSigninNote()}
       </div>
       <div class="hero-paper" aria-hidden="true">
         <span>마음의 여백</span>
-        <p>마음에 오래 남은 노래를 한 장의 작은 기록으로.</p>
+        <p>마음에 오래 남은 노래를 나만의 작은 기록으로.</p>
       </div>
     </section>
     <section class="recent-section" aria-label="최근 잔향">
       <div class="section-head">
         <p class="eyebrow">최근의 잔향</p>
-        <h2>조용히 쌓인 감정들</h2>
+        <h2>조용히 덮인 감정들</h2>
       </div>
-      ${recentLogs.length ? renderLogCards(recentLogs) : renderEmpty("아직 남겨둔 잔향이 없어요.")}
+      ${recentLogs.length ? renderLogCards(recentLogs) : renderEmpty(currentUser ? "아직 남겨둔 잔향이 없어요." : "로그인하면 나만의 잔향이 여기에 모여요.")}
+    </section>
+  `;
+}
+
+function renderAuthPage(mode) {
+  const isSignup = mode === "signup";
+
+  app.innerHTML = `
+    <section class="auth-panel">
+      <p class="eyebrow">${isSignup ? "회원가입" : "로그인"}</p>
+      <h1>${isSignup ? "잔향 시작하기" : "다시 잔향으로"}</h1>
+      <p class="page-description">${isSignup ? "마음에 남은 노래를 나만의 기록으로 남겨보세요." : "내가 남긴 노래와 감정을 조용히 보관해요."}</p>
+      <form id="authForm" class="auth-form">
+        <div class="field">
+          <label for="email">이메일</label>
+          <input id="email" name="email" type="email" autocomplete="email" required>
+        </div>
+        <div class="field">
+          <label for="password">비밀번호</label>
+          <input id="password" name="password" type="password" autocomplete="${isSignup ? "new-password" : "current-password"}" required>
+        </div>
+        <div class="form-footer">
+          <p id="authError" class="error" role="alert"></p>
+          <button class="button" type="submit">${isSignup ? "잔향 시작하기" : "로그인"}</button>
+        </div>
+      </form>
+      <p id="authNotice" class="notice" aria-live="polite"></p>
+      <p class="auth-switch">
+        ${isSignup ? "이미 계정이 있다면" : "처음이라면"}
+        <a href="${isSignup ? "/login" : "/signup"}" data-link>${isSignup ? "로그인" : "회원가입"}</a>
+      </p>
+    </section>
+  `;
+
+  const form = document.querySelector("#authForm");
+  const errorBox = document.querySelector("#authError");
+  const notice = document.querySelector("#authNotice");
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    errorBox.textContent = "";
+    notice.textContent = "";
+
+    const formData = new FormData(form);
+
+    try {
+      const session = await api(`/api/auth/${isSignup ? "signup" : "login"}`, {
+        method: "POST",
+        body: JSON.stringify({
+          email: formData.get("email"),
+          password: formData.get("password")
+        })
+      });
+
+      if (session.accessToken) {
+        setSession(session);
+        navigate(isSignup ? "/logs/new" : "/logs");
+        return;
+      }
+
+      notice.textContent = "가입 확인이 필요해요. 메일을 확인한 뒤 로그인해 주세요.";
+    } catch (error) {
+      errorBox.textContent = error.message;
+    }
+  });
+}
+
+function renderAuthPrompt() {
+  app.innerHTML = `
+    <section class="auth-prompt">
+      <p class="eyebrow">개인 잔향</p>
+      <h1>내 잔향을 보려면 로그인이 필요해요.</h1>
+      <p class="page-description">로그인하면 노래와 감정을 나만의 공간에 조용히 보관할 수 있어요.</p>
+      <div class="actions">
+        <a class="button" href="/login" data-link>로그인</a>
+        <a class="ghost-button" href="/signup" data-link>회원가입</a>
+      </div>
     </section>
   `;
 }
@@ -136,7 +249,7 @@ async function renderNewLog() {
         </div>
         <div class="manual-section">
           <p class="panel-kicker">직접 입력</p>
-          <p class="helper-copy">찾는 노래가 없다면 아래에 조용히 적어두세요.</p>
+          <p class="helper-copy">찾는 노래가 없다면 아래에 조용히 적어주세요.</p>
           <div class="manual-grid">
             <div class="field">
               <label for="title">노래 제목</label>
@@ -315,12 +428,34 @@ async function renderLogDetail(id) {
     app.innerHTML = `
       <section class="empty-state">
         <div>
-          <h1>기록을 찾을 수 없어요</h1>
+          <h1>잔향을 찾을 수 없어요</h1>
           <a class="button" href="/logs" data-link>내 잔향</a>
         </div>
       </section>
     `;
   }
+}
+
+function renderNavigation() {
+  nav.innerHTML = currentUser
+    ? `
+      <a href="/" data-link>홈</a>
+      <a href="/logs/new" data-link>잔향 남기기</a>
+      <a href="/logs" data-link>내 잔향</a>
+      <span class="account-pill" title="${escapeHtml(currentUser.email)}">${escapeHtml(currentUser.email)}</span>
+      <button class="nav-logout" type="button" data-logout>로그아웃</button>
+    `
+    : `
+      <a href="/" data-link>홈</a>
+      <a href="/login" data-link>로그인</a>
+      <a href="/signup" data-link>회원가입</a>
+    `;
+  navLinks = [...nav.querySelectorAll("a[data-link]")];
+  setCurrentNav(window.location.pathname);
+}
+
+function renderHomeSigninNote() {
+  return `<p class="home-signin-note">내 잔향을 보려면 로그인이 필요해요.</p>`;
 }
 
 function renderLogCards(logs) {
@@ -435,13 +570,65 @@ function setCurrentNav(pathname) {
   });
 }
 
+async function loadCurrentUser() {
+  if (!authSession?.accessToken) {
+    return;
+  }
+
+  try {
+    const { user } = await api("/api/auth/me");
+    authSession = { ...authSession, user };
+    currentUser = user;
+    window.localStorage.setItem(authStorageKey, JSON.stringify(authSession));
+  } catch {
+    clearSession();
+  }
+}
+
+async function logout() {
+  try {
+    await api("/api/auth/logout", { method: "POST" });
+  } finally {
+    clearSession();
+    navigate("/");
+  }
+}
+
+function setSession(session) {
+  authSession = session;
+  currentUser = session.user;
+  window.localStorage.setItem(authStorageKey, JSON.stringify(session));
+  renderNavigation();
+}
+
+function clearSession() {
+  authSession = null;
+  currentUser = null;
+  window.localStorage.removeItem(authStorageKey);
+  renderNavigation();
+}
+
+function readStoredSession() {
+  try {
+    const session = JSON.parse(window.localStorage.getItem(authStorageKey) ?? "null");
+    return session?.accessToken ? session : null;
+  } catch {
+    return null;
+  }
+}
+
+function authHeaders() {
+  return authSession?.accessToken ? { Authorization: `Bearer ${authSession.accessToken}` } : {};
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
+    ...options,
     headers: {
       "Content-Type": "application/json",
+      ...authHeaders(),
       ...options.headers
-    },
-    ...options
+    }
   });
   const body = await response.json();
 

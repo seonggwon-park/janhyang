@@ -8,13 +8,31 @@ import { normalizeItunesTrack } from "../src/songSearch.js";
 let server;
 let baseUrl;
 let searchCalls = 0;
+let userAToken;
+let userBToken;
+
+const userA = {
+  email: "a@example.com",
+  id: "aaaaaaaa-0000-4000-8000-000000000001",
+  password: "password-a"
+};
+const userB = {
+  email: "b@example.com",
+  id: "bbbbbbbb-0000-4000-8000-000000000002",
+  password: "password-b"
+};
 
 before(async () => {
-  const supabase = createMockSupabase();
+  const supabase = createMockSupabase([userA, userB]);
   server = createAppServer({
+    authOptions: {
+      fetchImpl: supabase.fetch,
+      supabaseAnonKey: "test-anon-key",
+      supabaseUrl: "https://example.supabase.co"
+    },
     databaseOptions: {
       fetchImpl: supabase.fetch,
-      supabaseKey: "test-key",
+      supabaseKey: "test-service-role-key",
       supabaseUrl: "https://example.supabase.co"
     },
     logger: { error() {} },
@@ -26,6 +44,15 @@ before(async () => {
 
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  userAToken = (await request("/api/auth/login", {
+    body: JSON.stringify({ email: userA.email, password: userA.password }),
+    method: "POST"
+  }, null)).accessToken;
+  userBToken = (await request("/api/auth/login", {
+    body: JSON.stringify({ email: userB.email, password: userB.password }),
+    method: "POST"
+  }, null)).accessToken;
 });
 
 after(async () => {
@@ -33,7 +60,7 @@ after(async () => {
 });
 
 test("starts with no saved songs", async () => {
-  const body = await request("/api/songs");
+  const body = await request("/api/songs", {}, null);
 
   assert.deepEqual(body.songs, []);
 });
@@ -41,8 +68,8 @@ test("starts with no saved songs", async () => {
 test("empty external song search query returns empty results", async () => {
   searchCalls = 0;
 
-  const empty = await request("/api/songs/search?q=");
-  const tooShort = await request("/api/songs/search?q=a");
+  const empty = await request("/api/songs/search?q=", {}, null);
+  const tooShort = await request("/api/songs/search?q=a", {}, null);
 
   assert.deepEqual(empty.songs, []);
   assert.deepEqual(tooShort.songs, []);
@@ -51,29 +78,29 @@ test("empty external song search query returns empty results", async () => {
 
 test("normalizes iTunes music track responses", () => {
   const song = normalizeItunesTrack({
-    trackId: 1658078988,
-    trackName: "Ditto",
     artistName: "NewJeans",
-    collectionName: "OMG - Single",
     artworkUrl100: "https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/example/100x100bb.jpg",
+    collectionName: "OMG - Single",
     previewUrl: "https://audio-ssl.itunes.apple.com/preview.m4a",
-    releaseDate: "2022-12-19T12:00:00Z"
+    releaseDate: "2022-12-19T12:00:00Z",
+    trackId: 1658078988,
+    trackName: "Ditto"
   });
 
   assert.deepEqual(song, {
-    title: "Ditto",
-    artist: "NewJeans",
     albumName: "OMG - Single",
+    artist: "NewJeans",
     coverImageUrl: "https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/example/300x300bb.jpg",
     externalId: "1658078988",
     externalSource: "itunes",
     previewUrl: "https://audio-ssl.itunes.apple.com/preview.m4a",
-    releaseYear: 2022
+    releaseYear: 2022,
+    title: "Ditto"
   });
 });
 
 test("external song search endpoint returns normalized song results", async () => {
-  const body = await request("/api/songs/search?q=ditto");
+  const body = await request("/api/songs/search?q=ditto", {}, null);
 
   assert.equal(body.songs.length, 1);
   assert.equal(body.songs[0].title, "Ditto");
@@ -83,34 +110,61 @@ test("external song search endpoint returns normalized song results", async () =
 test("Vercel entrypoint exports a default handler and supports rewritten API paths", async () => {
   assert.equal(typeof vercelHandler, "function");
 
-  const body = await request("/api/index.js?path=songs/search&q=ditto");
+  const body = await request("/api/index.js?path=songs/search&q=ditto", {}, null);
 
   assert.equal(body.songs.length, 1);
   assert.equal(body.songs[0].title, "Ditto");
 });
 
-test("creates and reads a music log with a manual song", async () => {
-  const created = await request("/api/logs", {
-    method: "POST",
+test("requires authentication for user-owned log routes", async () => {
+  const list = await rawRequest("/api/logs", {}, null);
+  const create = await rawRequest("/api/logs", {
     body: JSON.stringify({
-      song: {
-        title: "새벽의 잔상",
-        artist: "테스트 아티스트",
-        album: "테스트 앨범",
-        year: "2026"
-      },
+      emotionIds: ["calm"],
+      note: "비공개 잔향",
+      song: { artist: "테스트", title: "테스트 곡" }
+    }),
+    method: "POST"
+  }, null);
+
+  assert.equal(list.status, 401);
+  assert.equal(create.status, 401);
+});
+
+test("creates and reads a music log with a manual song for the current user", async () => {
+  const created = await request("/api/logs", {
+    body: JSON.stringify({
       emotionIds: ["calm", "warmth"],
       listenedAt: "2026-06-01",
-      note: "느리게 가라앉는 마음이 남았다."
-    })
+      note: "소리가 가라앉고 마음에 남았다.",
+      song: {
+        album: "테스트 앨범",
+        artist: "테스트 아티스트",
+        title: "안녕의 여운",
+        year: "2026"
+      }
+    }),
+    method: "POST"
   });
 
-  assert.equal(created.log.song.title, "새벽의 잔상");
+  assert.equal(created.log.userId, userA.id);
+  assert.equal(created.log.song.title, "안녕의 여운");
   assert.equal(created.log.song.externalSource, "manual");
   assert.deepEqual(created.log.emotions.map((emotion) => emotion.id), ["calm", "warmth"]);
 
   const detail = await request(`/api/logs/${encodeURIComponent(created.log.id)}`);
-  assert.equal(detail.log.note, "느리게 가라앉는 마음이 남았다.");
+  assert.equal(detail.log.note, "소리가 가라앉고 마음에 남았다.");
+});
+
+test("only returns logs owned by the authenticated user", async () => {
+  const created = await createExternalLog("첫 번째 장면은 아직 선명하다.");
+  const ownerLogs = await request("/api/logs");
+  const otherLogs = await request("/api/logs", {}, userBToken);
+  const otherDetail = await rawRequest(`/api/logs/${encodeURIComponent(created.log.id)}`, {}, userBToken);
+
+  assert.ok(ownerLogs.logs.some((log) => log.id === created.log.id));
+  assert.equal(otherLogs.logs.some((log) => log.id === created.log.id), false);
+  assert.equal(otherDetail.status, 404);
 });
 
 test("creating logs with the same external song reuses the Supabase song row", async () => {
@@ -122,6 +176,37 @@ test("creating logs with the same external song reuses the Supabase song row", a
   assert.equal(first.log.song.externalId, "1658078988");
   assert.equal(first.log.song.albumName, "OMG - Single");
   assert.equal(first.log.song.coverImageUrl, "https://example.com/cover.jpg");
+});
+
+test("update and delete only work for the owning user", async () => {
+  const created = await createExternalLog("수정되기 전의 잔향.");
+  const otherUpdate = await rawRequest(`/api/logs/${encodeURIComponent(created.log.id)}`, {
+    body: JSON.stringify({ note: "다른 사람이 바꿀 수 없다." }),
+    method: "PATCH"
+  }, userBToken);
+
+  assert.equal(otherUpdate.status, 404);
+
+  const updated = await request(`/api/logs/${encodeURIComponent(created.log.id)}`, {
+    body: JSON.stringify({ note: "조용히 다시 적은 잔향." }),
+    method: "PATCH"
+  });
+
+  assert.equal(updated.log.note, "조용히 다시 적은 잔향.");
+
+  const otherDelete = await rawRequest(`/api/logs/${encodeURIComponent(created.log.id)}`, {
+    method: "DELETE"
+  }, userBToken);
+
+  assert.equal(otherDelete.status, 404);
+
+  const deleted = await request(`/api/logs/${encodeURIComponent(created.log.id)}`, {
+    method: "DELETE"
+  });
+  const afterDelete = await rawRequest(`/api/logs/${encodeURIComponent(created.log.id)}`);
+
+  assert.equal(deleted.ok, true);
+  assert.equal(afterDelete.status, 404);
 });
 
 test("returns a clear error when Supabase env vars are missing", async () => {
@@ -143,53 +228,63 @@ test("returns a clear error when Supabase env vars are missing", async () => {
   }
 });
 
-test("rejects logs without emotions", async () => {
-  const response = await fetch(`${baseUrl}/api/logs`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+test("rejects logs without emotions after authentication", async () => {
+  const response = await rawRequest("/api/logs", {
     body: JSON.stringify({
-      song: { title: "무감정", artist: "테스트" },
       emotionIds: [],
-      note: "비어 있다."
-    })
+      note: "비어 있다.",
+      song: { artist: "테스트", title: "무감정" }
+    }),
+    method: "POST"
   });
-  const body = await response.json();
 
   assert.equal(response.status, 400);
-  assert.match(body.error, /감정/);
+  assert.match(response.body.error, /감정/);
 });
 
 async function createExternalLog(note) {
   return request("/api/logs", {
-    method: "POST",
     body: JSON.stringify({
-      song: externalSong(),
       emotionIds: ["calm"],
       listenedAt: "2026-06-01",
-      note
-    })
+      note,
+      song: externalSong()
+    }),
+    method: "POST"
   });
 }
 
-function createMockSupabase() {
+function createMockSupabase(seedUsers = []) {
   const state = {
     logs: [],
     nextLogId: 1,
     nextSongId: 1,
-    songs: []
+    nextTokenId: 1,
+    sessions: new Map(),
+    songs: [],
+    users: seedUsers.map((user) => ({ ...user }))
   };
 
   return {
     fetch: async (input, options = {}) => {
       const requestUrl = new URL(String(input));
+
+      if (requestUrl.pathname.startsWith("/auth/v1/")) {
+        return handleAuthRequest(state, requestUrl, options);
+      }
+
+      if (!requestUrl.pathname.startsWith("/rest/v1/")) {
+        return jsonResponse({ error: "not found" }, 404);
+      }
+
       const table = requestUrl.pathname.split("/").pop();
 
       if (options.method === "POST" && table === "songs") {
         const rows = JSON.parse(options.body).map((song) => {
           const now = new Date().toISOString();
           const row = {
-            id: `00000000-0000-4000-8000-${String(state.nextSongId++).padStart(12, "0")}`,
             created_at: now,
+            id: `00000000-0000-4000-8000-${String(state.nextSongId++).padStart(12, "0")}`,
             updated_at: now,
             ...song
           };
@@ -204,8 +299,8 @@ function createMockSupabase() {
         const rows = JSON.parse(options.body).map((log) => {
           const now = new Date().toISOString();
           const row = {
-            id: `10000000-0000-4000-8000-${String(state.nextLogId++).padStart(12, "0")}`,
             created_at: now,
+            id: `10000000-0000-4000-8000-${String(state.nextLogId++).padStart(12, "0")}`,
             updated_at: now,
             ...log
           };
@@ -213,6 +308,22 @@ function createMockSupabase() {
           return row;
         });
 
+        return jsonResponse(rows);
+      }
+
+      if ((options.method === "PATCH" || options.method === "PUT") && table === "music_logs") {
+        const patch = JSON.parse(options.body);
+        const rows = applyFilters(state.logs, requestUrl).map((log) => {
+          Object.assign(log, patch, { updated_at: new Date().toISOString() });
+          return log;
+        });
+
+        return jsonResponse(rows);
+      }
+
+      if (options.method === "DELETE" && table === "music_logs") {
+        const rows = applyFilters(state.logs, requestUrl);
+        state.logs = state.logs.filter((log) => !rows.includes(log));
         return jsonResponse(rows);
       }
 
@@ -234,6 +345,82 @@ function createMockSupabase() {
   };
 }
 
+function handleAuthRequest(state, requestUrl, options) {
+  const pathname = requestUrl.pathname.replace("/auth/v1", "");
+
+  if (options.method === "POST" && pathname === "/token") {
+    const body = JSON.parse(options.body);
+    const user = state.users.find((candidate) => candidate.email === body.email && candidate.password === body.password);
+
+    if (!user) {
+      return jsonResponse({ error: "invalid credentials" }, 401);
+    }
+
+    return jsonResponse(createSession(state, user));
+  }
+
+  if (options.method === "POST" && pathname === "/signup") {
+    const body = JSON.parse(options.body);
+    const existing = state.users.find((candidate) => candidate.email === body.email);
+
+    if (existing) {
+      return jsonResponse({ error: "already registered" }, 422);
+    }
+
+    const user = {
+      email: body.email,
+      id: `cccccccc-0000-4000-8000-${String(state.users.length + 1).padStart(12, "0")}`,
+      password: body.password
+    };
+    state.users.push(user);
+
+    return jsonResponse(createSession(state, user));
+  }
+
+  if (options.method === "GET" && pathname === "/user") {
+    const user = userFromToken(state, options);
+    return user ? jsonResponse(publicUser(user)) : jsonResponse({ error: "unauthorized" }, 401);
+  }
+
+  if (options.method === "POST" && pathname === "/logout") {
+    const token = tokenFromHeaders(options);
+    state.sessions.delete(token);
+    return jsonResponse({}, 204);
+  }
+
+  return jsonResponse({ error: "not found" }, 404);
+}
+
+function createSession(state, user) {
+  const token = `token-${state.nextTokenId++}-${user.id}`;
+  state.sessions.set(token, user.id);
+
+  return {
+    access_token: token,
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+    refresh_token: `refresh-${token}`,
+    user: publicUser(user)
+  };
+}
+
+function userFromToken(state, options) {
+  const userId = state.sessions.get(tokenFromHeaders(options));
+  return state.users.find((user) => user.id === userId) ?? null;
+}
+
+function tokenFromHeaders(options) {
+  const authorization = options.headers?.Authorization ?? options.headers?.authorization ?? "";
+  const match = String(authorization).match(/^Bearer\s+(.+)$/i);
+  return match ? match[1] : "";
+}
+
+function publicUser(user) {
+  return {
+    email: user.email,
+    id: user.id
+  };
+}
+
 function applyFilters(rows, requestUrl) {
   let filtered = [...rows];
 
@@ -248,38 +435,59 @@ function applyFilters(rows, requestUrl) {
     }
   }
 
+  const order = requestUrl.searchParams.get("order");
+
+  if (order === "created_at.desc") {
+    filtered.sort((left, right) => String(right.created_at).localeCompare(String(left.created_at)));
+  }
+
   const limit = Number.parseInt(requestUrl.searchParams.get("limit"), 10);
   return Number.isFinite(limit) ? filtered.slice(0, limit) : filtered;
 }
 
 function jsonResponse(body, status = 200) {
   return {
+    json: async () => body,
     ok: status >= 200 && status < 300,
-    status,
-    json: async () => body
+    status
   };
 }
 
 function externalSong() {
   return {
-    title: "Ditto",
-    artist: "NewJeans",
     albumName: "OMG - Single",
+    artist: "NewJeans",
     coverImageUrl: "https://example.com/cover.jpg",
     externalId: "1658078988",
     externalSource: "itunes",
     previewUrl: "https://example.com/preview.m4a",
-    releaseYear: 2022
+    releaseYear: 2022,
+    title: "Ditto"
   };
 }
 
-async function request(pathname, options = {}) {
+async function request(pathname, options = {}, token = userAToken) {
+  const response = await rawRequest(pathname, options, token);
+
+  assert.equal(response.ok, true, response.body.error);
+  return response.body;
+}
+
+async function rawRequest(pathname, options = {}, token = userAToken) {
+  const headers = {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...options.headers
+  };
   const response = await fetch(`${baseUrl}${pathname}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options
+    ...options,
+    headers
   });
   const body = await response.json();
 
-  assert.equal(response.ok, true, body.error);
-  return body;
+  return {
+    body,
+    ok: response.ok,
+    status: response.status
+  };
 }

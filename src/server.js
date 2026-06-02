@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createAuthService, bearerToken } from "./auth.js";
 import { createDatabase, emotions } from "./db.js";
 import { searchExternalSongs } from "./songSearch.js";
 
@@ -45,6 +46,7 @@ export function createRequestHandler(options = {}) {
 }
 
 export function createApiHandler(options = {}) {
+  const auth = options.auth ?? createAuthService(options.authOptions);
   const database = options.database ?? createDatabase(options.databaseOptions);
   const songSearch = options.songSearch ?? ((query) => searchExternalSongs(query, options.songSearchOptions));
   const logger = options.logger ?? console;
@@ -52,7 +54,7 @@ export function createApiHandler(options = {}) {
   return async function apiHandler(request, response, providedUrl) {
     try {
       const requestUrl = providedUrl ?? createRequestUrl(request);
-      await handleApiRequest(request, response, requestUrl, database, songSearch);
+      await handleApiRequest(request, response, requestUrl, auth, database, songSearch);
     } catch (error) {
       logger.error(error);
       sendJson(response, error.statusCode ?? 500, {
@@ -74,7 +76,7 @@ function createRequestUrl(request) {
   return requestUrl;
 }
 
-async function handleApiRequest(request, response, requestUrl, database, songSearch) {
+async function handleApiRequest(request, response, requestUrl, auth, database, songSearch) {
   const method = request.method ?? "GET";
   const pathname = requestUrl.pathname;
 
@@ -85,6 +87,28 @@ async function handleApiRequest(request, response, requestUrl, database, songSea
 
   if (method === "GET" && pathname === "/api/emotions") {
     sendJson(response, 200, { emotions });
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/auth/login") {
+    const body = await readJsonBody(request);
+    sendJson(response, 200, await auth.login(body));
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/auth/signup") {
+    const body = await readJsonBody(request);
+    sendJson(response, 201, await auth.signup(body));
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/auth/logout") {
+    sendJson(response, 200, await auth.logout(bearerToken(request)));
+    return;
+  }
+
+  if (method === "GET" && pathname === "/api/auth/me") {
+    sendJson(response, 200, { user: await auth.requireUser(request) });
     return;
   }
 
@@ -115,14 +139,16 @@ async function handleApiRequest(request, response, requestUrl, database, songSea
   }
 
   if (method === "GET" && pathname === "/api/logs") {
-    const logs = await database.listLogs();
+    const user = await auth.requireUser(request);
+    const logs = await database.listLogs(user);
     sendJson(response, 200, { logs });
     return;
   }
 
   if (method === "POST" && pathname === "/api/logs") {
+    const user = await auth.requireUser(request);
     const body = await readJsonBody(request);
-    const log = await database.createLog(body);
+    const log = await database.createLog(body, user);
     sendJson(response, 201, { log });
     return;
   }
@@ -130,7 +156,8 @@ async function handleApiRequest(request, response, requestUrl, database, songSea
   const logDetailMatch = pathname.match(/^\/api\/logs\/([^/]+)$/);
 
   if (method === "GET" && logDetailMatch) {
-    const log = await database.getLog(decodeURIComponent(logDetailMatch[1]));
+    const user = await auth.requireUser(request);
+    const log = await database.getLog(decodeURIComponent(logDetailMatch[1]), user);
 
     if (!log) {
       sendJson(response, 404, { error: "기록을 찾을 수 없어요." });
@@ -138,6 +165,33 @@ async function handleApiRequest(request, response, requestUrl, database, songSea
     }
 
     sendJson(response, 200, { log });
+    return;
+  }
+
+  if ((method === "PATCH" || method === "PUT") && logDetailMatch) {
+    const user = await auth.requireUser(request);
+    const body = await readJsonBody(request);
+    const log = await database.updateLog(decodeURIComponent(logDetailMatch[1]), body, user);
+
+    if (!log) {
+      sendJson(response, 404, { error: "기록을 찾을 수 없어요." });
+      return;
+    }
+
+    sendJson(response, 200, { log });
+    return;
+  }
+
+  if (method === "DELETE" && logDetailMatch) {
+    const user = await auth.requireUser(request);
+    const deleted = await database.deleteLog(decodeURIComponent(logDetailMatch[1]), user);
+
+    if (!deleted) {
+      sendJson(response, 404, { error: "기록을 찾을 수 없어요." });
+      return;
+    }
+
+    sendJson(response, 200, { ok: true });
     return;
   }
 

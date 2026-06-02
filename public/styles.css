@@ -160,6 +160,40 @@ nav a[aria-current="page"] {
   background: rgba(111, 79, 59, 0.10);
 }
 
+.account-pill,
+.nav-logout {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 680;
+  white-space: nowrap;
+}
+
+.account-pill {
+  max-width: 190px;
+  padding: 8px 11px;
+  overflow: hidden;
+  color: var(--soft);
+  text-overflow: ellipsis;
+}
+
+.nav-logout {
+  padding: 8px 13px;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+}
+
+.nav-logout:hover,
+.nav-logout:focus-visible {
+  color: var(--brown-dark);
+  background: rgba(111, 79, 59, 0.08);
+  outline: none;
+}
+
 .app-shell {
   width: min(1120px, calc(100% - 38px));
   margin: 0 auto;
@@ -264,6 +298,14 @@ h2 {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.home-signin-note {
+  max-width: 360px;
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.7;
 }
 
 .button,
@@ -528,11 +570,63 @@ h2 {
 
 .song-panel,
 .entry-form,
+.auth-panel,
 .entry-detail {
   border: 1px solid rgba(92, 76, 62, 0.11);
   border-radius: 8px;
   background: var(--surface);
   box-shadow: var(--quiet-shadow);
+}
+
+.auth-panel,
+.auth-prompt {
+  max-width: 680px;
+  margin: 0 auto;
+}
+
+.auth-panel {
+  padding: clamp(28px, 5vw, 52px);
+}
+
+.auth-panel h1,
+.auth-prompt h1 {
+  font-size: clamp(36px, 5vw, 58px);
+}
+
+.auth-form {
+  margin-top: 32px;
+}
+
+.auth-switch,
+.notice {
+  margin: 22px 0 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.auth-switch a {
+  color: var(--brown);
+  font-weight: 760;
+}
+
+.auth-switch a:hover,
+.auth-switch a:focus-visible {
+  color: var(--brown-dark);
+  outline: none;
+}
+
+.notice {
+  color: var(--brown);
+}
+
+.auth-prompt {
+  min-height: 390px;
+  display: grid;
+  align-content: center;
+  padding: clamp(28px, 6vw, 62px);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 247, 0.70), rgba(239, 229, 216, 0.34));
 }
 
 .song-panel {
