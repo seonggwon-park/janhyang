@@ -711,7 +711,7 @@ async function renderReflectionDetail(id) {
             <span class="song-disc" aria-hidden="true">${escapeHtml(songInitial(reflection.song))}</span>
             <div>
               <h1>${escapeHtml(reflection.title || reflection.song.title)}</h1>
-              <p class="muted">${escapeHtml(reflection.song.title)} · ${escapeHtml(reflection.song.artist)}${renderSongMeta(reflection.song)}</p>
+              <p class="muted">${escapeHtml(reflection.title ? `${reflection.song.title} · ${reflection.song.artist}` : reflection.song.artist)}${renderSongMeta(reflection.song)}</p>
             </div>
           </div>
         </div>
@@ -887,6 +887,8 @@ function setCurrentNav(pathname) {
       ? pathname === "/"
       : href === "/logs"
         ? pathname === "/logs" || /^\/logs\/[^/]+$/.test(pathname)
+        : href === "/records"
+          ? pathname === "/records" || pathname.startsWith("/logs") || pathname.startsWith("/reflections")
         : pathname === href;
     link.toggleAttribute("aria-current", active);
   });
@@ -985,6 +987,11 @@ function formatDate(date) {
 function previewNote(note) {
   const text = String(note ?? "").trim();
   return text.length > 86 ? `${text.slice(0, 86)}...` : text;
+}
+
+function previewLongText(text) {
+  const normalizedText = String(text ?? "").replace(/\s+/g, " ").trim();
+  return normalizedText.length > 132 ? `${normalizedText.slice(0, 132)}...` : normalizedText;
 }
 
 function songInitial(song) {

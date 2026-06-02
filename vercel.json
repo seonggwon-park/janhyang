@@ -13,6 +13,18 @@
       "destination": "/index.html"
     },
     {
+      "source": "/reflections",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/reflections/:path*",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/records",
+      "destination": "/index.html"
+    },
+    {
       "source": "/login",
       "destination": "/index.html"
     },

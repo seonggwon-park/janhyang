@@ -131,6 +131,21 @@ test("requires authentication for user-owned log routes", async () => {
   assert.equal(create.status, 401);
 });
 
+test("requires authentication for user-owned reflection routes", async () => {
+  const list = await rawRequest("/api/reflections", {}, null);
+  const create = await rawRequest("/api/reflections", {
+    body: JSON.stringify({
+      body: "혼자만 볼 수 있는 긴 여음.",
+      emotionIds: ["calm"],
+      song: { artist: "테스트", title: "테스트 곡" }
+    }),
+    method: "POST"
+  }, null);
+
+  assert.equal(list.status, 401);
+  assert.equal(create.status, 401);
+});
+
 test("creates and reads a music log with a manual song for the current user", async () => {
   const created = await request("/api/logs", {
     body: JSON.stringify({
@@ -156,6 +171,32 @@ test("creates and reads a music log with a manual song for the current user", as
   assert.equal(detail.log.note, "소리가 가라앉고 마음에 남았다.");
 });
 
+test("creates and reads a long reflection with a manual song for the current user", async () => {
+  const created = await request("/api/reflections", {
+    body: JSON.stringify({
+      body: "짧게 지나가지 않는 마음이 있어서 한참을 적어두었다.\n이 노래는 오래 남는 장면처럼 돌아왔다.",
+      emotionIds: ["longing", "calm"],
+      listenedAt: "2026-06-02",
+      song: {
+        album: "여음 앨범",
+        artist: "테스트 아티스트",
+        title: "긴 밤의 노래",
+        year: "2026"
+      },
+      title: "오래 남은 밤"
+    }),
+    method: "POST"
+  });
+
+  assert.equal(created.reflection.userId, userA.id);
+  assert.equal(created.reflection.title, "오래 남은 밤");
+  assert.equal(created.reflection.song.externalSource, "manual");
+  assert.deepEqual(created.reflection.emotions.map((emotion) => emotion.id), ["longing", "calm"]);
+
+  const detail = await request(`/api/reflections/${encodeURIComponent(created.reflection.id)}`);
+  assert.match(detail.reflection.body, /오래 남는 장면/);
+});
+
 test("only returns logs owned by the authenticated user", async () => {
   const created = await createExternalLog("첫 번째 장면은 아직 선명하다.");
   const ownerLogs = await request("/api/logs");
@@ -164,6 +205,17 @@ test("only returns logs owned by the authenticated user", async () => {
 
   assert.ok(ownerLogs.logs.some((log) => log.id === created.log.id));
   assert.equal(otherLogs.logs.some((log) => log.id === created.log.id), false);
+  assert.equal(otherDetail.status, 404);
+});
+
+test("only returns reflections owned by the authenticated user", async () => {
+  const created = await createExternalReflection("다른 사람에게 보이면 안 되는 긴 감상.");
+  const ownerReflections = await request("/api/reflections");
+  const otherReflections = await request("/api/reflections", {}, userBToken);
+  const otherDetail = await rawRequest(`/api/reflections/${encodeURIComponent(created.reflection.id)}`, {}, userBToken);
+
+  assert.ok(ownerReflections.reflections.some((reflection) => reflection.id === created.reflection.id));
+  assert.equal(otherReflections.reflections.some((reflection) => reflection.id === created.reflection.id), false);
   assert.equal(otherDetail.status, 404);
 });
 
@@ -176,6 +228,15 @@ test("creating logs with the same external song reuses the Supabase song row", a
   assert.equal(first.log.song.externalId, "1658078988");
   assert.equal(first.log.song.albumName, "OMG - Single");
   assert.equal(first.log.song.coverImageUrl, "https://example.com/cover.jpg");
+});
+
+test("creating reflections with the same external song reuses the Supabase song row", async () => {
+  const first = await createExternalReflection("여음으로 남긴 첫 번째 긴 감상.");
+  const second = await createExternalReflection("같은 노래에 대해 다시 길게 적은 감상.");
+
+  assert.equal(first.reflection.song.id, second.reflection.song.id);
+  assert.equal(first.reflection.song.externalSource, "itunes");
+  assert.equal(first.reflection.song.externalId, "1658078988");
 });
 
 test("update and delete only work for the owning user", async () => {
@@ -242,6 +303,20 @@ test("rejects logs without emotions after authentication", async () => {
   assert.match(response.body.error, /감정/);
 });
 
+test("rejects reflections without a body after authentication", async () => {
+  const response = await rawRequest("/api/reflections", {
+    body: JSON.stringify({
+      body: "",
+      emotionIds: ["calm"],
+      song: { artist: "테스트", title: "빈 여음" }
+    }),
+    method: "POST"
+  });
+
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /감상/);
+});
+
 async function createExternalLog(note) {
   return request("/api/logs", {
     body: JSON.stringify({
@@ -254,12 +329,27 @@ async function createExternalLog(note) {
   });
 }
 
+async function createExternalReflection(body) {
+  return request("/api/reflections", {
+    body: JSON.stringify({
+      body,
+      emotionIds: ["calm"],
+      listenedAt: "2026-06-02",
+      song: externalSong(),
+      title: "긴 여음"
+    }),
+    method: "POST"
+  });
+}
+
 function createMockSupabase(seedUsers = []) {
   const state = {
     logs: [],
+    nextReflectionId: 1,
     nextLogId: 1,
     nextSongId: 1,
     nextTokenId: 1,
+    reflections: [],
     sessions: new Map(),
     songs: [],
     users: seedUsers.map((user) => ({ ...user }))
@@ -311,11 +401,37 @@ function createMockSupabase(seedUsers = []) {
         return jsonResponse(rows);
       }
 
+      if (options.method === "POST" && table === "music_reflections") {
+        const rows = JSON.parse(options.body).map((reflection) => {
+          const now = new Date().toISOString();
+          const row = {
+            created_at: now,
+            id: `20000000-0000-4000-8000-${String(state.nextReflectionId++).padStart(12, "0")}`,
+            updated_at: now,
+            ...reflection
+          };
+          state.reflections.push(row);
+          return row;
+        });
+
+        return jsonResponse(rows);
+      }
+
       if ((options.method === "PATCH" || options.method === "PUT") && table === "music_logs") {
         const patch = JSON.parse(options.body);
         const rows = applyFilters(state.logs, requestUrl).map((log) => {
           Object.assign(log, patch, { updated_at: new Date().toISOString() });
           return log;
+        });
+
+        return jsonResponse(rows);
+      }
+
+      if ((options.method === "PATCH" || options.method === "PUT") && table === "music_reflections") {
+        const patch = JSON.parse(options.body);
+        const rows = applyFilters(state.reflections, requestUrl).map((reflection) => {
+          Object.assign(reflection, patch, { updated_at: new Date().toISOString() });
+          return reflection;
         });
 
         return jsonResponse(rows);
@@ -327,6 +443,12 @@ function createMockSupabase(seedUsers = []) {
         return jsonResponse(rows);
       }
 
+      if (options.method === "DELETE" && table === "music_reflections") {
+        const rows = applyFilters(state.reflections, requestUrl);
+        state.reflections = state.reflections.filter((reflection) => !rows.includes(reflection));
+        return jsonResponse(rows);
+      }
+
       if (table === "songs") {
         return jsonResponse(applyFilters(state.songs, requestUrl));
       }
@@ -335,6 +457,15 @@ function createMockSupabase(seedUsers = []) {
         const rows = applyFilters(state.logs, requestUrl).map((log) => ({
           ...log,
           songs: state.songs.find((song) => song.id === log.song_id) ?? null
+        }));
+
+        return jsonResponse(rows);
+      }
+
+      if (table === "music_reflections") {
+        const rows = applyFilters(state.reflections, requestUrl).map((reflection) => ({
+          ...reflection,
+          songs: state.songs.find((song) => song.id === reflection.song_id) ?? null
         }));
 
         return jsonResponse(rows);

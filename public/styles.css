@@ -308,6 +308,17 @@ h2 {
   line-height: 1.7;
 }
 
+.home-signin-note a {
+  color: var(--brown);
+  font-weight: 720;
+}
+
+.home-signin-note a:hover,
+.home-signin-note a:focus-visible {
+  color: var(--brown-dark);
+  outline: none;
+}
+
 .button,
 .ghost-button,
 .back-link {
@@ -447,6 +458,16 @@ h2 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.record-sections {
+  display: grid;
+  gap: 36px;
+}
+
+.record-section {
+  display: grid;
+  gap: 16px;
+}
+
 .log-card {
   position: relative;
   min-height: 230px;
@@ -495,6 +516,23 @@ h2 {
   color: var(--brown-dark);
   font-size: clamp(18px, 2.1vw, 23px);
   line-height: 1.62;
+}
+
+.reflection-card {
+  min-height: 280px;
+}
+
+.reflection-card h3 {
+  margin: 18px 0 0;
+  color: var(--brown-dark);
+  font-size: 21px;
+  line-height: 1.45;
+}
+
+.reflection-card .note-preview {
+  margin-top: 14px;
+  font-size: 17px;
+  color: #463a32;
 }
 
 .song-line {
@@ -694,6 +732,10 @@ h2 {
 
 .note-field {
   margin-bottom: 26px;
+}
+
+.reflection-body-field textarea {
+  min-height: 390px;
 }
 
 .date-field {
@@ -935,6 +977,23 @@ h2 {
     linear-gradient(180deg, rgba(255, 252, 247, 0.68), rgba(239, 229, 216, 0.42));
   font-size: clamp(22px, 3vw, 31px);
   line-height: 1.72;
+}
+
+.reflection-detail {
+  max-width: 880px;
+}
+
+.reflection-body {
+  margin: 34px 0 22px;
+  padding: clamp(26px, 5vw, 46px);
+  border-left: 3px solid rgba(184, 121, 112, 0.34);
+  border-radius: 8px;
+  color: var(--brown-dark);
+  background:
+    linear-gradient(180deg, rgba(255, 252, 247, 0.74), rgba(239, 229, 216, 0.34));
+  font-size: clamp(19px, 2.3vw, 24px);
+  line-height: 1.9;
+  white-space: pre-wrap;
 }
 
 .detail-date {
