@@ -50,6 +50,7 @@ async function init() {
 async function renderRoute() {
   const pathname = window.location.pathname;
   const detailMatch = pathname.match(/^\/logs\/([^/]+)$/);
+  const reflectionDetailMatch = pathname.match(/^\/reflections\/([^/]+)$/);
   setCurrentNav(pathname);
 
   if (pathname === "/") {
@@ -67,7 +68,15 @@ async function renderRoute() {
     return;
   }
 
-  if (!currentUser && (pathname === "/logs/new" || pathname === "/logs" || detailMatch)) {
+  if (!currentUser && (
+    pathname === "/logs/new" ||
+    pathname === "/logs" ||
+    pathname === "/records" ||
+    pathname === "/reflections/new" ||
+    pathname === "/reflections" ||
+    detailMatch ||
+    reflectionDetailMatch
+  )) {
     renderAuthPrompt();
     return;
   }
@@ -82,8 +91,28 @@ async function renderRoute() {
     return;
   }
 
+  if (pathname === "/reflections/new") {
+    await renderNewReflection();
+    return;
+  }
+
+  if (pathname === "/reflections") {
+    await renderReflections();
+    return;
+  }
+
+  if (pathname === "/records") {
+    await renderRecords();
+    return;
+  }
+
   if (detailMatch) {
     await renderLogDetail(decodeURIComponent(detailMatch[1]));
+    return;
+  }
+
+  if (reflectionDetailMatch) {
+    await renderReflectionDetail(decodeURIComponent(reflectionDetailMatch[1]));
     return;
   }
 
@@ -118,6 +147,7 @@ async function renderHome() {
           <a class="button" href="/logs/new" data-link>잔향 남기기</a>
           <a class="ghost-button" href="/logs" data-link>내 잔향 보기</a>
         </div>
+        <p class="home-signin-note"><a href="/reflections/new" data-link>짧게 남기기 어려운 노래는 여음으로 남겨보세요.</a></p>
         ${currentUser ? "" : renderHomeSigninNote()}
       </div>
       <div class="hero-paper" aria-hidden="true">
@@ -382,6 +412,181 @@ async function renderNewLog() {
   }
 }
 
+async function renderNewReflection() {
+  let selectedSong = null;
+
+  app.innerHTML = `
+    <section class="page-head">
+      <div>
+        <p class="eyebrow">여음 남기기</p>
+        <h1>여음 남기기</h1>
+        <p class="page-description">짧게 지나가지 않는 감정을 조금 더 길게 적어보세요.</p>
+      </div>
+      <a class="ghost-button" href="/reflections" data-link>내 여음</a>
+    </section>
+    <section class="entry-layout reflection-layout">
+      <div class="song-panel">
+        <p class="panel-kicker">오래 남은 노래</p>
+        <div class="field">
+          <label for="songSearch">노래 찾기</label>
+          <input id="songSearch" type="search" autocomplete="off" placeholder="제목, 아티스트, 앨범">
+        </div>
+        <div id="selectedSong" class="selected-song" aria-live="polite"></div>
+        <div id="songResults" class="song-results"></div>
+      </div>
+      <form id="reflectionForm" class="entry-form reflection-form">
+        <div class="field">
+          <label for="reflectionTitle">제목</label>
+          <input id="reflectionTitle" name="title" autocomplete="off" placeholder="이 감상에 제목을 붙인다면">
+        </div>
+        <div class="field reflection-body-field">
+          <label for="body">긴 감상</label>
+          <textarea id="body" name="body" required placeholder="이 노래가 오래 남은 이유를 천천히 적어보세요."></textarea>
+        </div>
+        <fieldset class="field emotion-options">
+          <legend>남은 감정</legend>
+          ${emotions.map(renderEmotionOption).join("")}
+        </fieldset>
+        <div class="field date-field">
+          <label for="listenedAt">들은 날</label>
+          <input id="listenedAt" name="listenedAt" type="date" value="${today()}">
+        </div>
+        <div class="manual-section">
+          <p class="panel-kicker">직접 입력</p>
+          <p class="helper-copy">찾는 노래가 없다면 아래에 조용히 적어주세요.</p>
+          <div class="manual-grid">
+            <div class="field">
+              <label for="title">노래 제목</label>
+              <input id="title" name="songTitle" autocomplete="off" required>
+            </div>
+            <div class="field">
+              <label for="artist">아티스트</label>
+              <input id="artist" name="artist" autocomplete="off" required>
+            </div>
+          </div>
+          <div class="manual-grid">
+            <div class="field">
+              <label for="album">앨범</label>
+              <input id="album" name="album" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="year">연도</label>
+              <input id="year" name="year" inputmode="numeric" autocomplete="off">
+            </div>
+          </div>
+        </div>
+        <div class="form-footer">
+          <p id="formError" class="error" role="alert"></p>
+          <button class="button" type="submit">여음 남기기</button>
+        </div>
+      </form>
+    </section>
+  `;
+
+  const searchInput = document.querySelector("#songSearch");
+  const results = document.querySelector("#songResults");
+  const selectedSongBox = document.querySelector("#selectedSong");
+  const form = document.querySelector("#reflectionForm");
+  const errorBox = document.querySelector("#formError");
+
+  renderSongSearchIdle(results);
+
+  searchInput.addEventListener("input", debounce(async () => {
+    await updateSongResults(searchInput.value);
+  }, 320));
+
+  results.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-song-id]");
+
+    if (!button) {
+      return;
+    }
+
+    selectedSong = JSON.parse(button.dataset.song);
+    fillSongFields(selectedSong);
+    selectedSongBox.classList.add("is-visible");
+    selectedSongBox.innerHTML = `
+      ${renderSongArtwork(selectedSong)}
+      <span>
+        <strong>${escapeHtml(selectedSong.title)}</strong>
+        <small>${escapeHtml(selectedSong.artist)}${renderSongMeta(selectedSong)}</small>
+      </span>
+    `;
+  });
+
+  form.addEventListener("input", (event) => {
+    if (["songTitle", "artist", "album", "year"].includes(event.target.name)) {
+      selectedSong = null;
+      selectedSongBox.classList.remove("is-visible");
+      selectedSongBox.innerHTML = "";
+    }
+  });
+
+  form.addEventListener("change", (event) => {
+    if (event.target.name !== "emotion") {
+      return;
+    }
+
+    const checked = [...form.querySelectorAll('input[name="emotion"]:checked')];
+
+    if (checked.length > maxEmotionCount) {
+      event.target.checked = false;
+      errorBox.textContent = `감정은 최대 ${maxEmotionCount}개까지 선택할 수 있어요.`;
+    } else {
+      errorBox.textContent = "";
+    }
+  });
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    errorBox.textContent = "";
+
+    const formData = new FormData(form);
+    const manualSong = {
+      title: formData.get("songTitle"),
+      artist: formData.get("artist"),
+      album: formData.get("album"),
+      year: formData.get("year")
+    };
+    const payload = {
+      songId: selectedSong?.id && !selectedSong.externalId ? selectedSong.id : "",
+      song: selectedSong ? songPayload(selectedSong) : manualSong,
+      emotionIds: formData.getAll("emotion"),
+      listenedAt: formData.get("listenedAt"),
+      title: formData.get("title"),
+      body: formData.get("body")
+    };
+
+    try {
+      const { reflection } = await api("/api/reflections", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      navigate(`/reflections/${encodeURIComponent(reflection.id)}`);
+    } catch (error) {
+      errorBox.textContent = error.message;
+    }
+  });
+
+  async function updateSongResults(query) {
+    const trimmedQuery = query.trim();
+
+    if (trimmedQuery.length < minSongSearchLength) {
+      renderSongSearchIdle(results);
+      return;
+    }
+
+    results.innerHTML = `<div class="search-state">노래를 찾는 중이에요.</div>`;
+
+    try {
+      const { songs } = await api(`/api/songs/search?q=${encodeURIComponent(trimmedQuery)}`);
+      results.innerHTML = songs.length ? songs.map(renderSongResult).join("") : renderSongSearchEmpty();
+    } catch {
+      results.innerHTML = renderSongSearchEmpty();
+    }
+  }
+}
+
 async function renderLogs() {
   const { logs } = await api("/api/logs");
 
@@ -396,6 +601,63 @@ async function renderLogs() {
     </section>
     <section class="archive-list">
       ${logs.length ? renderLogCards(logs) : renderEmpty("아직 남겨둔 잔향이 없어요.")}
+    </section>
+  `;
+}
+
+async function renderReflections() {
+  const { reflections } = await api("/api/reflections");
+
+  app.innerHTML = `
+    <section class="page-head">
+      <div>
+        <p class="eyebrow">내 여음</p>
+        <h1>내 여음</h1>
+        <p class="page-description">조금 더 길게 남겨둔 노래의 감상들을 모아두었어요.</p>
+      </div>
+      <a class="button" href="/reflections/new" data-link>여음 남기기</a>
+    </section>
+    <section class="archive-list">
+      ${reflections.length ? renderReflectionCards(reflections) : renderEmpty("아직 남겨둔 여음이 없어요.")}
+    </section>
+  `;
+}
+
+async function renderRecords() {
+  const [{ logs }, { reflections }] = await Promise.all([
+    api("/api/logs"),
+    api("/api/reflections")
+  ]);
+
+  app.innerHTML = `
+    <section class="page-head">
+      <div>
+        <p class="eyebrow">내 기록</p>
+        <h1>내 기록</h1>
+        <p class="page-description">짧게 남긴 잔향과 오래 남긴 여음을 한곳에서 살펴봐요.</p>
+      </div>
+    </section>
+    <section class="record-sections">
+      <div class="record-section">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">내 잔향</p>
+            <h2>짧게 남긴 감정</h2>
+          </div>
+          <a class="ghost-button" href="/logs" data-link>내 잔향</a>
+        </div>
+        ${logs.length ? renderLogCards(logs.slice(0, 2)) : renderEmpty("아직 남겨둔 잔향이 없어요.")}
+      </div>
+      <div class="record-section">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">내 여음</p>
+            <h2>조금 더 긴 감상</h2>
+          </div>
+          <a class="ghost-button" href="/reflections" data-link>내 여음</a>
+        </div>
+        ${reflections.length ? renderReflectionCards(reflections.slice(0, 2)) : renderEmpty("아직 남겨둔 여음이 없어요.")}
+      </div>
     </section>
   `;
 }
@@ -436,12 +698,49 @@ async function renderLogDetail(id) {
   }
 }
 
+async function renderReflectionDetail(id) {
+  try {
+    const { reflection } = await api(`/api/reflections/${encodeURIComponent(id)}`);
+
+    app.innerHTML = `
+      <article class="entry-detail reflection-detail">
+        <a class="back-link" href="/reflections" data-link>내 여음으로</a>
+        <div class="detail-meta">
+          <p class="eyebrow">${formatDate(reflection.listenedAt)}</p>
+          <div class="detail-song">
+            <span class="song-disc" aria-hidden="true">${escapeHtml(songInitial(reflection.song))}</span>
+            <div>
+              <h1>${escapeHtml(reflection.title || reflection.song.title)}</h1>
+              <p class="muted">${escapeHtml(reflection.song.title)} · ${escapeHtml(reflection.song.artist)}${renderSongMeta(reflection.song)}</p>
+            </div>
+          </div>
+        </div>
+        <div class="reflection-body">${escapeHtml(reflection.body)}</div>
+        <div class="emotion-row">
+          ${reflection.emotions.map((emotion) => `<span class="tag">${escapeHtml(emotion.label)}</span>`).join("")}
+        </div>
+        <p class="detail-date">남긴 날 ${formatDate(reflection.createdAt.slice(0, 10))}</p>
+      </article>
+    `;
+  } catch {
+    app.innerHTML = `
+      <section class="empty-state">
+        <div>
+          <h1>여음을 찾을 수 없어요</h1>
+          <a class="button" href="/reflections" data-link>내 여음</a>
+        </div>
+      </section>
+    `;
+  }
+}
+
 function renderNavigation() {
   nav.innerHTML = currentUser
     ? `
       <a href="/" data-link>홈</a>
       <a href="/logs/new" data-link>잔향 남기기</a>
-      <a href="/logs" data-link>내 잔향</a>
+      <a href="/reflections/new" data-link>여음 남기기</a>
+      <a href="/records" data-link>내 기록</a>
       <span class="account-pill" title="${escapeHtml(currentUser.email)}">${escapeHtml(currentUser.email)}</span>
       <button class="nav-logout" type="button" data-logout>로그아웃</button>
     `
@@ -473,6 +772,29 @@ function renderLogCards(logs) {
           </div>
           <div class="emotion-row">
             ${log.emotions.map((emotion) => `<span class="tag">${escapeHtml(emotion.label)}</span>`).join("")}
+          </div>
+        </a>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderReflectionCards(reflections) {
+  return `
+    <div class="log-list reflection-list">
+      ${reflections.map((reflection) => `
+        <a class="log-card reflection-card" href="/reflections/${encodeURIComponent(reflection.id)}" data-link>
+          <span class="log-date">${formatDate(reflection.listenedAt)}</span>
+          <h3>${escapeHtml(reflection.title || reflection.song.title)}</h3>
+          <p class="note-preview">${escapeHtml(previewLongText(reflection.body))}</p>
+          <div class="song-line">
+            <span>
+              <span class="song-title">${escapeHtml(reflection.song.title)}</span>
+              <span class="song-meta">${escapeHtml(reflection.song.artist)}${renderSongMeta(reflection.song)}</span>
+            </span>
+          </div>
+          <div class="emotion-row">
+            ${reflection.emotions.map((emotion) => `<span class="tag">${escapeHtml(emotion.label)}</span>`).join("")}
           </div>
         </a>
       `).join("")}

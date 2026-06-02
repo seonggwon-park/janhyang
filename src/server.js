@@ -153,7 +153,23 @@ async function handleApiRequest(request, response, requestUrl, auth, database, s
     return;
   }
 
+  if (method === "GET" && pathname === "/api/reflections") {
+    const user = await auth.requireUser(request);
+    const reflections = await database.listReflections(user);
+    sendJson(response, 200, { reflections });
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/reflections") {
+    const user = await auth.requireUser(request);
+    const body = await readJsonBody(request);
+    const reflection = await database.createReflection(body, user);
+    sendJson(response, 201, { reflection });
+    return;
+  }
+
   const logDetailMatch = pathname.match(/^\/api\/logs\/([^/]+)$/);
+  const reflectionDetailMatch = pathname.match(/^\/api\/reflections\/([^/]+)$/);
 
   if (method === "GET" && logDetailMatch) {
     const user = await auth.requireUser(request);
@@ -188,6 +204,46 @@ async function handleApiRequest(request, response, requestUrl, auth, database, s
 
     if (!deleted) {
       sendJson(response, 404, { error: "기록을 찾을 수 없어요." });
+      return;
+    }
+
+    sendJson(response, 200, { ok: true });
+    return;
+  }
+
+  if (method === "GET" && reflectionDetailMatch) {
+    const user = await auth.requireUser(request);
+    const reflection = await database.getReflection(decodeURIComponent(reflectionDetailMatch[1]), user);
+
+    if (!reflection) {
+      sendJson(response, 404, { error: "여음을 찾을 수 없어요." });
+      return;
+    }
+
+    sendJson(response, 200, { reflection });
+    return;
+  }
+
+  if ((method === "PATCH" || method === "PUT") && reflectionDetailMatch) {
+    const user = await auth.requireUser(request);
+    const body = await readJsonBody(request);
+    const reflection = await database.updateReflection(decodeURIComponent(reflectionDetailMatch[1]), body, user);
+
+    if (!reflection) {
+      sendJson(response, 404, { error: "여음을 찾을 수 없어요." });
+      return;
+    }
+
+    sendJson(response, 200, { reflection });
+    return;
+  }
+
+  if (method === "DELETE" && reflectionDetailMatch) {
+    const user = await auth.requireUser(request);
+    const deleted = await database.deleteReflection(decodeURIComponent(reflectionDetailMatch[1]), user);
+
+    if (!deleted) {
+      sendJson(response, 404, { error: "여음을 찾을 수 없어요." });
       return;
     }
 

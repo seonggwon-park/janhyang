@@ -146,13 +146,98 @@ export function createDatabase(options = {}) {
     return rows.length > 0;
   }
 
+  async function listReflections(user) {
+    const requestUrl = supabaseUrl(config, "music_reflections");
+    requestUrl.searchParams.set("select", "*,songs(*)");
+    requestUrl.searchParams.set("user_id", `eq.${user.id}`);
+    requestUrl.searchParams.set("order", "created_at.desc");
+
+    const reflections = await supabaseRequest(config, requestUrl);
+    return reflections.map(hydrateReflection).filter(Boolean);
+  }
+
+  async function getReflection(id, user) {
+    const requestUrl = supabaseUrl(config, "music_reflections");
+    requestUrl.searchParams.set("select", "*,songs(*)");
+    requestUrl.searchParams.set("id", `eq.${id}`);
+    requestUrl.searchParams.set("user_id", `eq.${user.id}`);
+    requestUrl.searchParams.set("limit", "1");
+
+    const reflections = await supabaseRequest(config, requestUrl);
+    return reflections[0] ? hydrateReflection(reflections[0]) : null;
+  }
+
+  async function createReflection(input, user) {
+    const reflection = normalizeReflectionInput(input);
+    const song = await resolveSong(config, input);
+    const rows = await insertRows(config, "music_reflections", [{
+      body: reflection.body,
+      emotions: reflection.emotionIds,
+      listened_at: reflection.listenedAt,
+      song_id: song.id,
+      title: reflection.title,
+      user_id: user.id
+    }]);
+
+    return hydrateReflection({ ...rows[0], songs: song });
+  }
+
+  async function updateReflection(id, input, user) {
+    const current = await getReflection(id, user);
+
+    if (!current) {
+      return null;
+    }
+
+    const reflection = normalizeReflectionInput({
+      body: input?.body === undefined ? current.body : input.body,
+      emotionIds: input?.emotionIds === undefined ? current.emotionIds : input.emotionIds,
+      listenedAt: input?.listenedAt === undefined ? current.listenedAt : input.listenedAt,
+      title: input?.title === undefined ? current.title : input.title
+    });
+    const requestUrl = supabaseUrl(config, "music_reflections");
+    requestUrl.searchParams.set("id", `eq.${id}`);
+    requestUrl.searchParams.set("user_id", `eq.${user.id}`);
+
+    await supabaseRequest(config, requestUrl, {
+      body: JSON.stringify({
+        body: reflection.body,
+        emotions: reflection.emotionIds,
+        listened_at: reflection.listenedAt,
+        title: reflection.title
+      }),
+      headers: { Prefer: "return=representation" },
+      method: "PATCH"
+    });
+
+    return getReflection(id, user);
+  }
+
+  async function deleteReflection(id, user) {
+    const requestUrl = supabaseUrl(config, "music_reflections");
+    requestUrl.searchParams.set("id", `eq.${id}`);
+    requestUrl.searchParams.set("user_id", `eq.${user.id}`);
+
+    const rows = await supabaseRequest(config, requestUrl, {
+      headers: { Prefer: "return=representation" },
+      method: "DELETE"
+    });
+
+    return rows.length > 0;
+  }
+
   return {
     createLog,
+    createReflection,
     deleteLog,
+    deleteReflection,
     getLog,
+    getReflection,
     listLogs,
+    listReflections,
     listSongs,
-    updateLog
+    updateLog,
+    updateReflection
   };
 }
 
@@ -285,6 +370,30 @@ function hydrateLog(row) {
   };
 }
 
+function hydrateReflection(row) {
+  if (!row?.songs) {
+    return null;
+  }
+
+  const emotionIds = Array.isArray(row.emotions) ? row.emotions : [];
+
+  return {
+    id: row.id,
+    songId: row.song_id,
+    userId: row.user_id,
+    emotionIds,
+    emotions: emotionIds
+      .map((id) => emotions.find((emotion) => emotion.id === id))
+      .filter(Boolean),
+    title: row.title ?? "",
+    body: row.body,
+    listenedAt: row.listened_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    song: publicSong(row.songs)
+  };
+}
+
 function publicSong(row) {
   return {
     id: row.id,
@@ -396,6 +505,30 @@ function normalizeDate(value) {
   return new Date().toISOString().slice(0, 10);
 }
 
+function normalizeReflectionInput(input) {
+  const emotionIds = normalizeEmotionIds(input?.emotionIds);
+  const body = cleanMultilineText(input?.body);
+
+  if (!emotionIds.length) {
+    throw validationError("감정을 하나 이상 선택해 주세요.");
+  }
+
+  if (emotionIds.length > maxEmotionCount) {
+    throw validationError(`감정은 최대 ${maxEmotionCount}개까지 선택할 수 있어요.`);
+  }
+
+  if (!body) {
+    throw validationError("오래 남은 감상을 적어 주세요.");
+  }
+
+  return {
+    body,
+    emotionIds,
+    listenedAt: normalizeDate(input?.listenedAt),
+    title: emptyToNull(input?.title)
+  };
+}
+
 function normalizeYear(value) {
   const year = Number.parseInt(value, 10);
   return Number.isFinite(year) ? year : null;
@@ -408,6 +541,14 @@ function emptyToNull(value) {
 
 function cleanText(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function cleanMultilineText(value) {
+  return String(value ?? "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function normalize(value) {
