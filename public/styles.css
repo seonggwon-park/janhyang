@@ -531,6 +531,10 @@ h2 {
   transform: translateY(-3px);
 }
 
+[data-card-href] {
+  cursor: pointer;
+}
+
 .card-detail-link {
   border-radius: 6px;
 }
@@ -595,6 +599,20 @@ h2 {
   margin-top: 14px;
   font-size: 17px;
   color: #463a32;
+}
+
+.preview-cta {
+  display: inline-flex;
+  align-self: flex-start;
+  margin-top: 16px;
+  color: var(--terracotta);
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.preview-cta::after {
+  content: "→";
+  margin-left: 6px;
 }
 
 .song-line {
@@ -1120,6 +1138,19 @@ a.song-title:hover,
     linear-gradient(180deg, rgba(255, 252, 247, 0.76), rgba(255, 248, 238, 0.48)),
     var(--surface);
   box-shadow: var(--quiet-shadow);
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.public-record-card[data-card-href]:hover,
+.public-record-card[data-card-href]:focus-visible,
+.public-record-card[data-card-href]:focus-within {
+  border-color: rgba(111, 79, 59, 0.22);
+  box-shadow: var(--shadow);
+  outline: none;
+  transform: translateY(-2px);
 }
 
 .public-record-meta {

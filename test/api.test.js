@@ -328,15 +328,22 @@ test("only returns logs owned by the authenticated user", async () => {
   assert.equal(otherDetail.status, 404);
 });
 
-test("only returns reflections owned by the authenticated user", async () => {
-  const created = await createExternalReflection("다른 사람에게 보이면 안 되는 긴 감상.");
+test("keeps reflection lists private while allowing public redacted reflection detail", async () => {
+  const longBody = Array(4).fill("다른 사람의 목록에는 보이면 안 되지만, 공개 미리보기에서 들어오면 전문을 읽을 수 있는 긴 여음.").join("\n");
+  const created = await createExternalReflection(longBody);
   const ownerReflections = await request("/api/reflections");
   const otherReflections = await request("/api/reflections", {}, userBToken);
-  const otherDetail = await rawRequest(`/api/reflections/${encodeURIComponent(created.reflection.id)}`, {}, userBToken);
+  const anonymousDetail = await request(`/api/reflections/${encodeURIComponent(created.reflection.id)}`, {}, null);
+  const otherDetail = await request(`/api/reflections/${encodeURIComponent(created.reflection.id)}`, {}, userBToken);
+  const ownerDetail = await request(`/api/reflections/${encodeURIComponent(created.reflection.id)}`);
 
   assert.ok(ownerReflections.reflections.some((reflection) => reflection.id === created.reflection.id));
   assert.equal(otherReflections.reflections.some((reflection) => reflection.id === created.reflection.id), false);
-  assert.equal(otherDetail.status, 404);
+  assert.equal(anonymousDetail.reflection.body, longBody);
+  assert.equal(otherDetail.reflection.body, longBody);
+  assert.equal(otherDetail.reflection.ownedByCurrentUser, false);
+  assert.equal(ownerDetail.reflection.ownedByCurrentUser, true);
+  assert.equal("userId" in anonymousDetail.reflection, false);
 });
 
 test("song detail publicly lists records for the song while my pages stay private", async () => {

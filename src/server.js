@@ -243,8 +243,8 @@ async function handleApiRequest(request, response, requestUrl, auth, database, s
   }
 
   if (method === "GET" && reflectionDetailMatch) {
-    const user = await auth.requireUser(request);
-    const reflection = await database.getReflection(decodeURIComponent(reflectionDetailMatch[1]), user);
+    const user = await optionalUser(auth, request);
+    const reflection = await database.getPublicReflection(decodeURIComponent(reflectionDetailMatch[1]), user);
 
     if (!reflection) {
       sendJson(response, 404, { error: "여음을 찾을 수 없어요." });

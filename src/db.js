@@ -248,6 +248,16 @@ export function createDatabase(options = {}) {
     return reflections[0] ? hydrateReflection(reflections[0]) : null;
   }
 
+  async function getPublicReflection(id, user = null) {
+    const requestUrl = supabaseUrl(config, "music_reflections");
+    requestUrl.searchParams.set("select", "*,songs(*)");
+    requestUrl.searchParams.set("id", `eq.${id}`);
+    requestUrl.searchParams.set("limit", "1");
+
+    const reflections = await supabaseRequest(config, requestUrl);
+    return reflections[0] ? publicReflectionDetail(reflections[0], user) : null;
+  }
+
   async function createReflection(input, user) {
     const customEmotionLabels = await userCustomEmotionLabels(config, user);
     const reflection = normalizeReflectionInput(input, customEmotionLabels);
@@ -316,6 +326,7 @@ export function createDatabase(options = {}) {
     deleteLog,
     deleteReflection,
     getLog,
+    getPublicReflection,
     getReflection,
     getSongDetail,
     listAvailableEmotions,
@@ -573,6 +584,17 @@ function publicRecentReflection(row, user) {
     recordType: "reflection",
     song: publicSong(row.songs),
     type: "여음"
+  };
+}
+
+function publicReflectionDetail(row, user) {
+  if (!row?.songs) {
+    return null;
+  }
+
+  return {
+    ...publicReflectionForSong(row, user),
+    song: publicSong(row.songs)
   };
 }
 

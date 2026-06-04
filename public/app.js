@@ -21,11 +21,34 @@ document.addEventListener("click", async (event) => {
   const link = event.target.closest("a[data-link]");
 
   if (!link) {
+    const card = event.target.closest("[data-card-href]");
+
+    if (!card || event.target.closest("a, button, input, textarea, select, label")) {
+      return;
+    }
+
+    event.preventDefault();
+    await navigate(card.dataset.cardHref);
     return;
   }
 
   event.preventDefault();
   await navigate(link.getAttribute("href"));
+});
+
+document.addEventListener("keydown", async (event) => {
+  if (event.key !== "Enter" && event.key !== " ") {
+    return;
+  }
+
+  const card = event.target.closest("[data-card-href]");
+
+  if (!card || event.target.closest("a, button, input, textarea, select, label")) {
+    return;
+  }
+
+  event.preventDefault();
+  await navigate(card.dataset.cardHref);
 });
 
 window.addEventListener("popstate", renderRoute);
@@ -78,8 +101,7 @@ async function renderRoute() {
     pathname === "/reflections" ||
     logEditMatch ||
     detailMatch ||
-    reflectionEditMatch ||
-    reflectionDetailMatch
+    reflectionEditMatch
   )) {
     renderAuthPrompt();
     return;
@@ -973,7 +995,7 @@ async function renderReflectionDetail(id) {
 
     app.innerHTML = `
       <article class="entry-detail reflection-detail">
-        <a class="back-link" href="/reflections" data-link>내 여음으로</a>
+        <a class="back-link" href="/songs/${encodeURIComponent(reflection.song.id)}" data-link>노래의 기록으로</a>
         <div class="detail-meta">
           <p class="eyebrow">${formatDate(reflection.listenedAt)}</p>
           <div class="detail-song">
@@ -1057,7 +1079,9 @@ function renderRecentRecordCards(records) {
       ${records.map((record) => {
         const isReflection = record.recordType === "reflection";
         const preview = isReflection ? previewLongText(record.body) : previewNote(record.note);
-        const href = `/songs/${encodeURIComponent(record.song.id)}`;
+        const href = isReflection
+          ? `/reflections/${encodeURIComponent(record.id)}`
+          : `/songs/${encodeURIComponent(record.song.id)}`;
 
         return `
           <a class="log-card recent-record-card${isReflection ? " reflection-card" : ""}" href="${href}" data-link>
@@ -1076,6 +1100,7 @@ function renderRecentRecordCards(records) {
             <div class="emotion-row">
               ${record.emotions.map((emotion) => `<span class="tag">${escapeHtml(emotion.label)}</span>`).join("")}
             </div>
+            ${isReflection ? `<span class="preview-cta">여음 읽기</span>` : ""}
           </a>
         `;
       }).join("")}
@@ -1109,7 +1134,7 @@ function renderReflectionCards(reflections) {
   return `
     <div class="log-list reflection-list">
       ${reflections.map((reflection) => `
-        <article class="log-card reflection-card">
+        <article class="log-card reflection-card" data-card-href="/reflections/${encodeURIComponent(reflection.id)}" tabindex="0" role="link">
           <a class="log-date card-detail-link" href="/reflections/${encodeURIComponent(reflection.id)}" data-link>${formatDate(reflection.listenedAt)}</a>
           <h3><a class="card-detail-link" href="/reflections/${encodeURIComponent(reflection.id)}" data-link>${escapeHtml(reflection.title || reflection.song.title)}</a></h3>
           <a class="note-preview card-detail-link" href="/reflections/${encodeURIComponent(reflection.id)}" data-link>${escapeHtml(previewLongText(reflection.body))}</a>
@@ -1122,6 +1147,7 @@ function renderReflectionCards(reflections) {
           <div class="emotion-row">
             ${reflection.emotions.map((emotion) => `<span class="tag">${escapeHtml(emotion.label)}</span>`).join("")}
           </div>
+          <a class="preview-cta card-detail-link" href="/reflections/${encodeURIComponent(reflection.id)}" data-link>여음 읽기</a>
         </article>
       `).join("")}
     </div>
@@ -1152,7 +1178,7 @@ function renderPublicReflectionItems(reflections) {
   return `
     <div class="public-record-list">
       ${reflections.map((reflection) => `
-        <article class="public-record-card public-reflection-card">
+        <article class="public-record-card public-reflection-card" data-card-href="/reflections/${encodeURIComponent(reflection.id)}" tabindex="0" role="link">
           <div class="public-record-meta">
             <span>${escapeHtml(reflection.authorLabel ?? "누군가의 여음")}</span>
             <time>${formatRecordDate(reflection)}</time>
@@ -1162,6 +1188,7 @@ function renderPublicReflectionItems(reflections) {
           <div class="emotion-row">
             ${reflection.emotions.map((emotion) => `<span class="tag">${escapeHtml(emotion.label)}</span>`).join("")}
           </div>
+          <a class="preview-cta card-detail-link" href="/reflections/${encodeURIComponent(reflection.id)}" data-link>여음 읽기</a>
           ${renderPublicOwnerActions("reflection", reflection)}
         </article>
       `).join("")}
@@ -1440,7 +1467,7 @@ function renderEmotionPickerInto(form) {
 }
 
 function ownsRecord(record) {
-  return Boolean(currentUser?.id && record?.userId === currentUser.id);
+  return Boolean(record?.ownedByCurrentUser || (currentUser?.id && record?.userId === currentUser.id));
 }
 
 async function navigate(href) {

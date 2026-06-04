@@ -41,7 +41,44 @@ test("SPA navigation keeps song query params for create CTAs", async () => {
   assert.match(spa.app.innerHTML, /여음 남기기/);
 });
 
-async function createSpa() {
+test("home 여음 preview links to the full reflection detail", async () => {
+  const spa = await createSpa();
+
+  assert.match(spa.app.innerHTML, /href="\/reflections\/reflection-1"/);
+  assert.match(spa.app.innerHTML, /여음 읽기/);
+
+  await spa.click("/reflections/reflection-1");
+
+  assert.equal(spa.location.pathname, "/reflections/reflection-1");
+  assert.match(spa.app.innerHTML, /아주 긴 여음 본문 첫 문장/);
+  assert.match(spa.app.innerHTML, /마지막 문장까지 전문으로 남아 있어요/);
+  assert.doesNotMatch(spa.app.innerHTML, /삭제하기/);
+});
+
+test("song detail 여음 preview links to the full reflection detail", async () => {
+  const spa = await createSpa();
+
+  await spa.click("/songs/song-1");
+
+  assert.match(spa.app.innerHTML, /data-card-href="\/reflections\/reflection-1"/);
+  assert.match(spa.app.innerHTML, /여음 읽기/);
+
+  await spa.click("/reflections/reflection-1");
+
+  assert.equal(spa.location.pathname, "/reflections/reflection-1");
+  assert.match(spa.app.innerHTML, /아주 긴 여음 본문 첫 문장/);
+});
+
+test("owned reflection detail shows edit and delete actions", async () => {
+  const spa = await createSpa({ reflectionOwned: true });
+
+  await spa.click("/reflections/reflection-1");
+
+  assert.match(spa.app.innerHTML, /고치기/);
+  assert.match(spa.app.innerHTML, /삭제하기/);
+});
+
+async function createSpa(options = {}) {
   const listeners = new Map();
   const elements = new Map();
   const app = element("#app");
@@ -70,6 +107,9 @@ async function createSpa() {
       }
 
       return element(selector);
+    },
+    querySelectorAll() {
+      return [];
     }
   };
   const window = {
@@ -92,7 +132,7 @@ async function createSpa() {
     clearTimeout,
     console,
     document,
-    fetch: fakeFetch,
+    fetch: (input, init) => fakeFetch(input, init, options),
     Intl,
     JSON,
     setTimeout,
@@ -215,7 +255,7 @@ function createStorage(initialValues = {}) {
   };
 }
 
-async function fakeFetch(input) {
+async function fakeFetch(input, _init, options = {}) {
   const path = String(input);
 
   if (path === "/api/emotions") {
@@ -245,13 +285,40 @@ async function fakeFetch(input) {
   }
 
   if (path === "/api/records/recent?limit=6") {
-    return jsonResponse({ records: [] });
+    return jsonResponse({
+      records: [{
+        body: longReflectionBody(),
+        createdAt: "2026-06-04T00:00:00.000Z",
+        emotionIds: ["calm"],
+        emotions: [{ id: "calm", label: "고요" }],
+        id: "reflection-1",
+        listenedAt: "2026-06-04",
+        recordType: "reflection",
+        song: {
+          artist: "테스트 아티스트",
+          id: "song-1",
+          title: "테스트 곡"
+        },
+        title: "긴 여음",
+        type: "여음"
+      }]
+    });
   }
 
   if (path === "/api/songs/song-1") {
     return jsonResponse({
       logs: [],
-      reflections: [],
+      reflections: [{
+        authorLabel: "누군가의 여음",
+        body: longReflectionBody(),
+        createdAt: "2026-06-04T00:00:00.000Z",
+        emotionIds: ["calm"],
+        emotions: [{ id: "calm", label: "고요" }],
+        id: "reflection-1",
+        listenedAt: "2026-06-04",
+        ownedByCurrentUser: options.reflectionOwned ?? false,
+        title: "긴 여음"
+      }],
       song: {
         artist: "테스트 아티스트",
         id: "song-1",
@@ -260,7 +327,31 @@ async function fakeFetch(input) {
     });
   }
 
+  if (path === "/api/reflections/reflection-1") {
+    return jsonResponse({
+      reflection: {
+        body: longReflectionBody(),
+        createdAt: "2026-06-04T00:00:00.000Z",
+        emotionIds: ["calm"],
+        emotions: [{ id: "calm", label: "고요" }],
+        id: "reflection-1",
+        listenedAt: "2026-06-04",
+        ownedByCurrentUser: options.reflectionOwned ?? false,
+        song: {
+          artist: "테스트 아티스트",
+          id: "song-1",
+          title: "테스트 곡"
+        },
+        title: "긴 여음"
+      }
+    });
+  }
+
   return jsonResponse({});
+}
+
+function longReflectionBody() {
+  return "아주 긴 여음 본문 첫 문장. 중간 문장들이 천천히 이어지고, 마지막 문장까지 전문으로 남아 있어요.";
 }
 
 function jsonResponse(body, status = 200) {
