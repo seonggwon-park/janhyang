@@ -35,6 +35,25 @@ export function createDatabase(options = {}) {
     return songs.map(publicSong);
   }
 
+  async function getSongDetail(id, user = null) {
+    const song = await findSong(config, { id });
+
+    if (!song) {
+      return null;
+    }
+
+    const [logRows, reflectionRows] = await Promise.all([
+      listPublicRowsForSong(config, "music_logs", song.id),
+      listPublicRowsForSong(config, "music_reflections", song.id)
+    ]);
+
+    return {
+      logs: logRows.map((row) => publicLogForSong(row, user)),
+      reflections: reflectionRows.map((row) => publicReflectionForSong(row, user)),
+      song: publicSong(song)
+    };
+  }
+
   async function listLogs(user) {
     const requestUrl = supabaseUrl(config, "music_logs");
     requestUrl.searchParams.set("select", "*,songs(*)");
@@ -233,6 +252,7 @@ export function createDatabase(options = {}) {
     deleteReflection,
     getLog,
     getReflection,
+    getSongDetail,
     listLogs,
     listReflections,
     listSongs,
@@ -347,6 +367,15 @@ async function insertRows(config, table, rows) {
   });
 }
 
+async function listPublicRowsForSong(config, table, songId) {
+  const requestUrl = supabaseUrl(config, table);
+  requestUrl.searchParams.set("select", "*");
+  requestUrl.searchParams.set("song_id", `eq.${songId}`);
+  requestUrl.searchParams.set("order", "created_at.desc");
+
+  return supabaseRequest(config, requestUrl);
+}
+
 function hydrateLog(row) {
   if (!row?.songs) {
     return null;
@@ -367,6 +396,25 @@ function hydrateLog(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     song: publicSong(row.songs)
+  };
+}
+
+function publicLogForSong(row, user) {
+  const emotionIds = Array.isArray(row.emotions) ? row.emotions : [];
+
+  return {
+    id: row.id,
+    songId: row.song_id,
+    emotionIds,
+    emotions: emotionIds
+      .map((id) => emotions.find((emotion) => emotion.id === id))
+      .filter(Boolean),
+    note: row.note,
+    listenedAt: row.listened_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    authorLabel: "누군가의 잔향",
+    ownedByCurrentUser: Boolean(user?.id && row.user_id === user.id)
   };
 }
 
@@ -391,6 +439,26 @@ function hydrateReflection(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     song: publicSong(row.songs)
+  };
+}
+
+function publicReflectionForSong(row, user) {
+  const emotionIds = Array.isArray(row.emotions) ? row.emotions : [];
+
+  return {
+    id: row.id,
+    songId: row.song_id,
+    emotionIds,
+    emotions: emotionIds
+      .map((id) => emotions.find((emotion) => emotion.id === id))
+      .filter(Boolean),
+    title: row.title ?? "",
+    body: row.body,
+    listenedAt: row.listened_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    authorLabel: "누군가의 여음",
+    ownedByCurrentUser: Boolean(user?.id && row.user_id === user.id)
   };
 }
 

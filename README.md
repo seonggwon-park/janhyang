@@ -70,7 +70,7 @@ SUPABASE_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY
 ```
 
-Vercel 설정에서 `src/server.js` 또는 `src/server.mjs`를 함수 진입점으로 직접 지정하지 마세요. `vercel.json`이 `/api/*` 요청은 `api/index.js`로, `/logs/*`, `/reflections/*`, `/records`, `/login`, `/signup` 같은 프론트엔드 라우트는 `public/index.html`로 연결합니다.
+Vercel 설정에서 `src/server.js` 또는 `src/server.mjs`를 함수 진입점으로 직접 지정하지 마세요. `vercel.json`이 `/api/*` 요청은 `api/index.js`로, `/logs/*`, `/reflections/*`, `/songs/*`, `/records`, `/login`, `/signup` 같은 프론트엔드 라우트는 `public/index.html`로 연결합니다.
 
 ## 확인
 
@@ -83,4 +83,4 @@ npm test
 
 ## 데이터
 
-곡 메타데이터는 Supabase `songs` 테이블에 저장됩니다. iTunes에서 선택한 곡은 `external_source + external_id`로 재사용해 중복 저장을 피하고, 직접 입력한 곡은 수동 곡으로 저장합니다. 짧은 잔향은 `music_logs`, 긴 여음은 `music_reflections` 테이블에 사용자별로 저장됩니다.
+곡 메타데이터는 Supabase `songs` 테이블에 저장됩니다. iTunes에서 선택한 곡은 `external_source + external_id`로 재사용해 중복 저장을 피하고, 직접 입력한 곡은 수동 곡으로 저장합니다. 짧은 잔향은 `music_logs`, 긴 여음은 `music_reflections` 테이블에 사용자별로 저장됩니다. 개인 목록은 현재 사용자의 기록만 보여주고, 노래 상세 페이지는 서버 API가 사용자 정보를 가린 공개 읽기 응답으로 같은 노래에 남겨진 잔향과 여음을 보여줍니다.

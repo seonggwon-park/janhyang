@@ -138,6 +138,21 @@ async function handleApiRequest(request, response, requestUrl, auth, database, s
     return;
   }
 
+  const songDetailMatch = pathname.match(/^\/api\/songs\/([^/]+)$/);
+
+  if (method === "GET" && songDetailMatch) {
+    const user = await optionalUser(auth, request);
+    const songDetail = await database.getSongDetail(decodeURIComponent(songDetailMatch[1]), user);
+
+    if (!songDetail) {
+      sendJson(response, 404, { error: "노래를 찾을 수 없어요." });
+      return;
+    }
+
+    sendJson(response, 200, songDetail);
+    return;
+  }
+
   if (method === "GET" && pathname === "/api/logs") {
     const user = await auth.requireUser(request);
     const logs = await database.listLogs(user);
@@ -252,6 +267,20 @@ async function handleApiRequest(request, response, requestUrl, auth, database, s
   }
 
   sendJson(response, 404, { error: "요청한 API가 없어요." });
+}
+
+async function optionalUser(auth, request) {
+  const token = bearerToken(request);
+
+  if (!token) {
+    return null;
+  }
+
+  try {
+    return await auth.getUser(token);
+  } catch {
+    return null;
+  }
 }
 
 async function readJsonBody(request) {

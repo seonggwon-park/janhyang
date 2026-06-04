@@ -219,6 +219,41 @@ test("only returns reflections owned by the authenticated user", async () => {
   assert.equal(otherDetail.status, 404);
 });
 
+test("song detail publicly lists records for the song while my pages stay private", async () => {
+  const createdLog = await createExternalLog("공개 노래 페이지에서는 보이는 짧은 잔향.");
+  const createdReflection = await createExternalReflection("공개 노래 페이지에서는 보이는 긴 여음.");
+  const songId = createdLog.log.song.id;
+
+  assert.equal(createdReflection.reflection.song.id, songId);
+
+  const anonymousDetail = await request(`/api/songs/${encodeURIComponent(songId)}`, {}, null);
+  const otherUserDetail = await request(`/api/songs/${encodeURIComponent(songId)}`, {}, userBToken);
+  const ownerDetail = await request(`/api/songs/${encodeURIComponent(songId)}`);
+  const otherLogs = await request("/api/logs", {}, userBToken);
+  const otherReflections = await request("/api/reflections", {}, userBToken);
+
+  const anonymousLog = anonymousDetail.logs.find((log) => log.id === createdLog.log.id);
+  const anonymousReflection = anonymousDetail.reflections.find((reflection) => reflection.id === createdReflection.reflection.id);
+  const otherUserLog = otherUserDetail.logs.find((log) => log.id === createdLog.log.id);
+  const otherUserReflection = otherUserDetail.reflections.find((reflection) => reflection.id === createdReflection.reflection.id);
+  const ownerLog = ownerDetail.logs.find((log) => log.id === createdLog.log.id);
+  const ownerReflection = ownerDetail.reflections.find((reflection) => reflection.id === createdReflection.reflection.id);
+
+  assert.equal(anonymousDetail.song.id, songId);
+  assert.equal(anonymousLog.authorLabel, "누군가의 잔향");
+  assert.equal(anonymousReflection.authorLabel, "누군가의 여음");
+  assert.equal(anonymousLog.ownedByCurrentUser, false);
+  assert.equal(anonymousReflection.ownedByCurrentUser, false);
+  assert.equal("userId" in anonymousLog, false);
+  assert.equal("userId" in anonymousReflection, false);
+  assert.equal(otherUserLog.ownedByCurrentUser, false);
+  assert.equal(otherUserReflection.ownedByCurrentUser, false);
+  assert.equal(ownerLog.ownedByCurrentUser, true);
+  assert.equal(ownerReflection.ownedByCurrentUser, true);
+  assert.equal(otherLogs.logs.some((log) => log.id === createdLog.log.id), false);
+  assert.equal(otherReflections.reflections.some((reflection) => reflection.id === createdReflection.reflection.id), false);
+});
+
 test("creating logs with the same external song reuses the Supabase song row", async () => {
   const first = await createExternalLog("처음 들은 장면이 선명했다.");
   const second = await createExternalLog("다시 들어도 같은 온도가 남았다.");
@@ -265,6 +300,44 @@ test("update and delete only work for the owning user", async () => {
     method: "DELETE"
   });
   const afterDelete = await rawRequest(`/api/logs/${encodeURIComponent(created.log.id)}`);
+
+  assert.equal(deleted.ok, true);
+  assert.equal(afterDelete.status, 404);
+});
+
+test("reflection update and delete only work for the owning user", async () => {
+  const created = await createExternalReflection("수정되기 전의 긴 여음.");
+  const otherUpdate = await rawRequest(`/api/reflections/${encodeURIComponent(created.reflection.id)}`, {
+    body: JSON.stringify({ body: "다른 사람이 바꿀 수 없다." }),
+    method: "PATCH"
+  }, userBToken);
+
+  assert.equal(otherUpdate.status, 404);
+
+  const updated = await request(`/api/reflections/${encodeURIComponent(created.reflection.id)}`, {
+    body: JSON.stringify({
+      body: "천천히 다시 적은 긴 여음.",
+      emotionIds: ["warmth"],
+      listenedAt: "2026-06-03",
+      title: "다시 적은 여음"
+    }),
+    method: "PATCH"
+  });
+
+  assert.equal(updated.reflection.body, "천천히 다시 적은 긴 여음.");
+  assert.equal(updated.reflection.title, "다시 적은 여음");
+  assert.deepEqual(updated.reflection.emotions.map((emotion) => emotion.id), ["warmth"]);
+
+  const otherDelete = await rawRequest(`/api/reflections/${encodeURIComponent(created.reflection.id)}`, {
+    method: "DELETE"
+  }, userBToken);
+
+  assert.equal(otherDelete.status, 404);
+
+  const deleted = await request(`/api/reflections/${encodeURIComponent(created.reflection.id)}`, {
+    method: "DELETE"
+  });
+  const afterDelete = await rawRequest(`/api/reflections/${encodeURIComponent(created.reflection.id)}`);
 
   assert.equal(deleted.ok, true);
   assert.equal(afterDelete.status, 404);

@@ -21,6 +21,10 @@
       "destination": "/index.html"
     },
     {
+      "source": "/songs/:path*",
+      "destination": "/index.html"
+    },
+    {
       "source": "/records",
       "destination": "/index.html"
     },

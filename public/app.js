@@ -49,8 +49,11 @@ async function init() {
 
 async function renderRoute() {
   const pathname = window.location.pathname;
+  const logEditMatch = pathname.match(/^\/logs\/([^/]+)\/edit$/);
   const detailMatch = pathname.match(/^\/logs\/([^/]+)$/);
+  const reflectionEditMatch = pathname.match(/^\/reflections\/([^/]+)\/edit$/);
   const reflectionDetailMatch = pathname.match(/^\/reflections\/([^/]+)$/);
+  const songDetailMatch = pathname.match(/^\/songs\/([^/]+)$/);
   setCurrentNav(pathname);
 
   if (pathname === "/") {
@@ -74,7 +77,9 @@ async function renderRoute() {
     pathname === "/records" ||
     pathname === "/reflections/new" ||
     pathname === "/reflections" ||
+    logEditMatch ||
     detailMatch ||
+    reflectionEditMatch ||
     reflectionDetailMatch
   )) {
     renderAuthPrompt();
@@ -106,8 +111,23 @@ async function renderRoute() {
     return;
   }
 
+  if (songDetailMatch) {
+    await renderSongDetail(decodeURIComponent(songDetailMatch[1]));
+    return;
+  }
+
+  if (logEditMatch) {
+    await renderEditLog(decodeURIComponent(logEditMatch[1]));
+    return;
+  }
+
   if (detailMatch) {
     await renderLogDetail(decodeURIComponent(detailMatch[1]));
+    return;
+  }
+
+  if (reflectionEditMatch) {
+    await renderEditReflection(decodeURIComponent(reflectionEditMatch[1]));
     return;
   }
 
@@ -317,6 +337,13 @@ async function renderNewLog() {
 
   renderSongSearchIdle(results);
 
+  selectedSong = await initialSongFromQuery();
+
+  if (selectedSong) {
+    fillSongFields(selectedSong);
+    showSelectedSong(selectedSongBox, selectedSong);
+  }
+
   searchInput.addEventListener("input", debounce(async () => {
     await updateSongResults(searchInput.value);
   }, 320));
@@ -330,14 +357,7 @@ async function renderNewLog() {
 
     selectedSong = JSON.parse(button.dataset.song);
     fillSongFields(selectedSong);
-    selectedSongBox.classList.add("is-visible");
-    selectedSongBox.innerHTML = `
-      ${renderSongArtwork(selectedSong)}
-      <span>
-        <strong>${escapeHtml(selectedSong.title)}</strong>
-        <small>${escapeHtml(selectedSong.artist)}${renderSongMeta(selectedSong)}</small>
-      </span>
-    `;
+    showSelectedSong(selectedSongBox, selectedSong);
   });
 
   form.addEventListener("input", (event) => {
@@ -491,6 +511,13 @@ async function renderNewReflection() {
 
   renderSongSearchIdle(results);
 
+  selectedSong = await initialSongFromQuery();
+
+  if (selectedSong) {
+    fillSongFields(selectedSong);
+    showSelectedSong(selectedSongBox, selectedSong);
+  }
+
   searchInput.addEventListener("input", debounce(async () => {
     await updateSongResults(searchInput.value);
   }, 320));
@@ -504,14 +531,7 @@ async function renderNewReflection() {
 
     selectedSong = JSON.parse(button.dataset.song);
     fillSongFields(selectedSong);
-    selectedSongBox.classList.add("is-visible");
-    selectedSongBox.innerHTML = `
-      ${renderSongArtwork(selectedSong)}
-      <span>
-        <strong>${escapeHtml(selectedSong.title)}</strong>
-        <small>${escapeHtml(selectedSong.artist)}${renderSongMeta(selectedSong)}</small>
-      </span>
-    `;
+    showSelectedSong(selectedSongBox, selectedSong);
   });
 
   form.addEventListener("input", (event) => {
@@ -662,9 +682,229 @@ async function renderRecords() {
   `;
 }
 
+async function renderSongDetail(id) {
+  try {
+    const { song, logs, reflections } = await api(`/api/songs/${encodeURIComponent(id)}`);
+
+    app.innerHTML = `
+      <section class="song-detail-hero">
+        <div class="song-detail-art">
+          ${renderLargeSongArtwork(song)}
+        </div>
+        <div class="song-detail-copy">
+          <p class="eyebrow">노래의 기록</p>
+          <h1>${escapeHtml(song.title)}</h1>
+          <p class="lead">${escapeHtml(song.artist)}${renderSongMeta(song)}</p>
+          <div class="actions">
+            <a class="button" href="/logs/new?songId=${encodeURIComponent(song.id)}" data-link>이 노래에 잔향 남기기</a>
+            <a class="ghost-button" href="/reflections/new?songId=${encodeURIComponent(song.id)}" data-link>이 노래에 여음 남기기</a>
+          </div>
+        </div>
+      </section>
+      <section class="song-public-sections">
+        <div class="record-section">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">잔향</p>
+              <h2>이 노래에 남겨진 짧은 감정</h2>
+            </div>
+          </div>
+          ${logs.length ? renderPublicLogItems(logs) : renderEmpty("아직 이 노래에 남겨진 잔향이 없어요.")}
+        </div>
+        <div class="record-section">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">여음</p>
+              <h2>조금 더 오래 머문 감상</h2>
+            </div>
+          </div>
+          ${reflections.length ? renderPublicReflectionItems(reflections) : renderEmpty("아직 이 노래에 남겨진 여음이 없어요.")}
+        </div>
+      </section>
+    `;
+
+    bindSongRecordActions(song.id);
+  } catch {
+    app.innerHTML = `
+      <section class="empty-state">
+        <div>
+          <h1>노래를 찾을 수 없어요</h1>
+          <a class="button" href="/" data-link>홈으로</a>
+        </div>
+      </section>
+    `;
+  }
+}
+
+async function renderEditLog(id) {
+  try {
+    const { log } = await api(`/api/logs/${encodeURIComponent(id)}`);
+
+    if (!ownsRecord(log)) {
+      renderAuthPrompt();
+      return;
+    }
+
+    app.innerHTML = `
+      <section class="page-head">
+        <div>
+          <p class="eyebrow">잔향 고치기</p>
+          <h1>잔향 고치기</h1>
+          <p class="page-description">남겨둔 감정과 짧은 문장을 다시 다듬어보세요.</p>
+        </div>
+        <a class="ghost-button" href="/logs/${encodeURIComponent(log.id)}" data-link>돌아가기</a>
+      </section>
+      <section class="entry-layout">
+        <div class="song-panel">
+          <p class="panel-kicker">마음에 남은 노래</p>
+          ${renderSelectedSong(log.song)}
+        </div>
+        <form id="editLogForm" class="entry-form">
+          <div class="field note-field">
+            <label for="note">짧은 문장</label>
+            <textarea id="note" name="note" maxlength="240" required placeholder="이 노래는 어떤 장면으로 남았나요?">${escapeHtml(log.note)}</textarea>
+          </div>
+          <fieldset class="field emotion-options">
+            <legend>남은 감정</legend>
+            ${emotions.map((emotion) => renderEmotionOption(emotion, log.emotionIds)).join("")}
+          </fieldset>
+          <div class="field date-field">
+            <label for="listenedAt">들은 날</label>
+            <input id="listenedAt" name="listenedAt" type="date" value="${escapeHtml(log.listenedAt)}">
+          </div>
+          <div class="form-footer">
+            <p id="formError" class="error" role="alert"></p>
+            <button class="button" type="submit">수정하기</button>
+          </div>
+        </form>
+      </section>
+    `;
+
+    const form = document.querySelector("#editLogForm");
+    const errorBox = document.querySelector("#formError");
+    bindEmotionLimit(form, errorBox);
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      errorBox.textContent = "";
+
+      const formData = new FormData(form);
+
+      try {
+        const { log: updatedLog } = await api(`/api/logs/${encodeURIComponent(log.id)}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            emotionIds: formData.getAll("emotion"),
+            listenedAt: formData.get("listenedAt"),
+            note: formData.get("note")
+          })
+        });
+        navigate(`/logs/${encodeURIComponent(updatedLog.id)}`);
+      } catch (error) {
+        errorBox.textContent = error.message;
+      }
+    });
+  } catch {
+    app.innerHTML = `
+      <section class="empty-state">
+        <div>
+          <h1>잔향을 찾을 수 없어요</h1>
+          <a class="button" href="/logs" data-link>내 잔향</a>
+        </div>
+      </section>
+    `;
+  }
+}
+
+async function renderEditReflection(id) {
+  try {
+    const { reflection } = await api(`/api/reflections/${encodeURIComponent(id)}`);
+
+    if (!ownsRecord(reflection)) {
+      renderAuthPrompt();
+      return;
+    }
+
+    app.innerHTML = `
+      <section class="page-head">
+        <div>
+          <p class="eyebrow">여음 고치기</p>
+          <h1>여음 고치기</h1>
+          <p class="page-description">조금 더 길게 남긴 감상을 차분히 다시 적어보세요.</p>
+        </div>
+        <a class="ghost-button" href="/reflections/${encodeURIComponent(reflection.id)}" data-link>돌아가기</a>
+      </section>
+      <section class="entry-layout reflection-layout">
+        <div class="song-panel">
+          <p class="panel-kicker">오래 남은 노래</p>
+          ${renderSelectedSong(reflection.song)}
+        </div>
+        <form id="editReflectionForm" class="entry-form reflection-form">
+          <div class="field">
+            <label for="reflectionTitle">제목</label>
+            <input id="reflectionTitle" name="title" autocomplete="off" placeholder="이 감상에 제목을 붙인다면" value="${escapeHtml(reflection.title)}">
+          </div>
+          <div class="field reflection-body-field">
+            <label for="body">긴 감상</label>
+            <textarea id="body" name="body" required placeholder="이 노래가 오래 남은 이유를 천천히 적어보세요.">${escapeHtml(reflection.body)}</textarea>
+          </div>
+          <fieldset class="field emotion-options">
+            <legend>남은 감정</legend>
+            ${emotions.map((emotion) => renderEmotionOption(emotion, reflection.emotionIds)).join("")}
+          </fieldset>
+          <div class="field date-field">
+            <label for="listenedAt">들은 날</label>
+            <input id="listenedAt" name="listenedAt" type="date" value="${escapeHtml(reflection.listenedAt)}">
+          </div>
+          <div class="form-footer">
+            <p id="formError" class="error" role="alert"></p>
+            <button class="button" type="submit">수정하기</button>
+          </div>
+        </form>
+      </section>
+    `;
+
+    const form = document.querySelector("#editReflectionForm");
+    const errorBox = document.querySelector("#formError");
+    bindEmotionLimit(form, errorBox);
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      errorBox.textContent = "";
+
+      const formData = new FormData(form);
+
+      try {
+        const { reflection: updatedReflection } = await api(`/api/reflections/${encodeURIComponent(reflection.id)}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            body: formData.get("body"),
+            emotionIds: formData.getAll("emotion"),
+            listenedAt: formData.get("listenedAt"),
+            title: formData.get("title")
+          })
+        });
+        navigate(`/reflections/${encodeURIComponent(updatedReflection.id)}`);
+      } catch (error) {
+        errorBox.textContent = error.message;
+      }
+    });
+  } catch {
+    app.innerHTML = `
+      <section class="empty-state">
+        <div>
+          <h1>여음을 찾을 수 없어요</h1>
+          <a class="button" href="/reflections" data-link>내 여음</a>
+        </div>
+      </section>
+    `;
+  }
+}
+
 async function renderLogDetail(id) {
   try {
     const { log } = await api(`/api/logs/${encodeURIComponent(id)}`);
+    const canManage = ownsRecord(log);
 
     app.innerHTML = `
       <article class="entry-detail">
@@ -683,9 +923,34 @@ async function renderLogDetail(id) {
         <div class="emotion-row">
           ${log.emotions.map((emotion) => `<span class="tag">${escapeHtml(emotion.label)}</span>`).join("")}
         </div>
+        ${canManage ? `
+          <div class="detail-actions">
+            <a class="ghost-button" href="/logs/${encodeURIComponent(log.id)}/edit" data-link>고치기</a>
+            <button class="danger-button" type="button" data-delete-log>삭제하기</button>
+          </div>
+          <p id="detailError" class="error detail-error" role="alert"></p>
+        ` : ""}
         <p class="detail-date">남긴 날 ${formatDate(log.createdAt.slice(0, 10))}</p>
       </article>
     `;
+
+    if (canManage) {
+      const deleteButton = document.querySelector("[data-delete-log]");
+      const errorBox = document.querySelector("#detailError");
+
+      deleteButton.addEventListener("click", async () => {
+        if (!window.confirm("이 잔향을 삭제할까요?")) {
+          return;
+        }
+
+        try {
+          await api(`/api/logs/${encodeURIComponent(log.id)}`, { method: "DELETE" });
+          navigate("/records");
+        } catch (error) {
+          errorBox.textContent = error.message;
+        }
+      });
+    }
   } catch {
     app.innerHTML = `
       <section class="empty-state">
@@ -701,6 +966,7 @@ async function renderLogDetail(id) {
 async function renderReflectionDetail(id) {
   try {
     const { reflection } = await api(`/api/reflections/${encodeURIComponent(id)}`);
+    const canManage = ownsRecord(reflection);
 
     app.innerHTML = `
       <article class="entry-detail reflection-detail">
@@ -719,9 +985,34 @@ async function renderReflectionDetail(id) {
         <div class="emotion-row">
           ${reflection.emotions.map((emotion) => `<span class="tag">${escapeHtml(emotion.label)}</span>`).join("")}
         </div>
+        ${canManage ? `
+          <div class="detail-actions">
+            <a class="ghost-button" href="/reflections/${encodeURIComponent(reflection.id)}/edit" data-link>고치기</a>
+            <button class="danger-button" type="button" data-delete-reflection>삭제하기</button>
+          </div>
+          <p id="detailError" class="error detail-error" role="alert"></p>
+        ` : ""}
         <p class="detail-date">남긴 날 ${formatDate(reflection.createdAt.slice(0, 10))}</p>
       </article>
     `;
+
+    if (canManage) {
+      const deleteButton = document.querySelector("[data-delete-reflection]");
+      const errorBox = document.querySelector("#detailError");
+
+      deleteButton.addEventListener("click", async () => {
+        if (!window.confirm("이 여음을 삭제할까요?")) {
+          return;
+        }
+
+        try {
+          await api(`/api/reflections/${encodeURIComponent(reflection.id)}`, { method: "DELETE" });
+          navigate("/records");
+        } catch (error) {
+          errorBox.textContent = error.message;
+        }
+      });
+    }
   } catch {
     app.innerHTML = `
       <section class="empty-state">
@@ -761,19 +1052,19 @@ function renderLogCards(logs) {
   return `
     <div class="log-list">
       ${logs.map((log) => `
-        <a class="log-card" href="/logs/${encodeURIComponent(log.id)}" data-link>
-          <span class="log-date">${formatDate(log.listenedAt)}</span>
-          <p class="note-preview">${escapeHtml(previewNote(log.note))}</p>
+        <article class="log-card">
+          <a class="log-date card-detail-link" href="/logs/${encodeURIComponent(log.id)}" data-link>${formatDate(log.listenedAt)}</a>
+          <a class="note-preview card-detail-link" href="/logs/${encodeURIComponent(log.id)}" data-link>${escapeHtml(previewNote(log.note))}</a>
           <div class="song-line">
             <span>
-              <span class="song-title">${escapeHtml(log.song.title)}</span>
+              <a class="song-title" href="/songs/${encodeURIComponent(log.song.id)}" data-link>${escapeHtml(log.song.title)}</a>
               <span class="song-meta">${escapeHtml(log.song.artist)}${renderSongMeta(log.song)}</span>
             </span>
           </div>
           <div class="emotion-row">
             ${log.emotions.map((emotion) => `<span class="tag">${escapeHtml(emotion.label)}</span>`).join("")}
           </div>
-        </a>
+        </article>
       `).join("")}
     </div>
   `;
@@ -783,23 +1074,120 @@ function renderReflectionCards(reflections) {
   return `
     <div class="log-list reflection-list">
       ${reflections.map((reflection) => `
-        <a class="log-card reflection-card" href="/reflections/${encodeURIComponent(reflection.id)}" data-link>
-          <span class="log-date">${formatDate(reflection.listenedAt)}</span>
-          <h3>${escapeHtml(reflection.title || reflection.song.title)}</h3>
-          <p class="note-preview">${escapeHtml(previewLongText(reflection.body))}</p>
+        <article class="log-card reflection-card">
+          <a class="log-date card-detail-link" href="/reflections/${encodeURIComponent(reflection.id)}" data-link>${formatDate(reflection.listenedAt)}</a>
+          <h3><a class="card-detail-link" href="/reflections/${encodeURIComponent(reflection.id)}" data-link>${escapeHtml(reflection.title || reflection.song.title)}</a></h3>
+          <a class="note-preview card-detail-link" href="/reflections/${encodeURIComponent(reflection.id)}" data-link>${escapeHtml(previewLongText(reflection.body))}</a>
           <div class="song-line">
             <span>
-              <span class="song-title">${escapeHtml(reflection.song.title)}</span>
+              <a class="song-title" href="/songs/${encodeURIComponent(reflection.song.id)}" data-link>${escapeHtml(reflection.song.title)}</a>
               <span class="song-meta">${escapeHtml(reflection.song.artist)}${renderSongMeta(reflection.song)}</span>
             </span>
           </div>
           <div class="emotion-row">
             ${reflection.emotions.map((emotion) => `<span class="tag">${escapeHtml(emotion.label)}</span>`).join("")}
           </div>
-        </a>
+        </article>
       `).join("")}
     </div>
   `;
+}
+
+function renderPublicLogItems(logs) {
+  return `
+    <div class="public-record-list">
+      ${logs.map((log) => `
+        <article class="public-record-card">
+          <div class="public-record-meta">
+            <span>${escapeHtml(log.authorLabel ?? "누군가의 잔향")}</span>
+            <time>${formatRecordDate(log)}</time>
+          </div>
+          <p class="note-preview">${escapeHtml(previewNote(log.note))}</p>
+          <div class="emotion-row">
+            ${log.emotions.map((emotion) => `<span class="tag">${escapeHtml(emotion.label)}</span>`).join("")}
+          </div>
+          ${renderPublicOwnerActions("log", log)}
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderPublicReflectionItems(reflections) {
+  return `
+    <div class="public-record-list">
+      ${reflections.map((reflection) => `
+        <article class="public-record-card public-reflection-card">
+          <div class="public-record-meta">
+            <span>${escapeHtml(reflection.authorLabel ?? "누군가의 여음")}</span>
+            <time>${formatRecordDate(reflection)}</time>
+          </div>
+          ${reflection.title ? `<h3>${escapeHtml(reflection.title)}</h3>` : ""}
+          <p class="note-preview">${escapeHtml(previewLongText(reflection.body))}</p>
+          <div class="emotion-row">
+            ${reflection.emotions.map((emotion) => `<span class="tag">${escapeHtml(emotion.label)}</span>`).join("")}
+          </div>
+          ${renderPublicOwnerActions("reflection", reflection)}
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderPublicOwnerActions(type, record) {
+  if (!record.ownedByCurrentUser) {
+    return "";
+  }
+
+  const collection = type === "log" ? "logs" : "reflections";
+  const attribute = type === "log" ? "data-delete-public-log" : "data-delete-public-reflection";
+
+  return `
+    <div class="detail-actions compact-actions">
+      <a class="ghost-button" href="/${collection}/${encodeURIComponent(record.id)}/edit" data-link>고치기</a>
+      <button class="danger-button" type="button" ${attribute}="${escapeHtml(record.id)}">삭제하기</button>
+    </div>
+    <p class="error detail-error public-record-error" role="alert"></p>
+  `;
+}
+
+function bindSongRecordActions(songId) {
+  document.querySelectorAll("[data-delete-public-log]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (!window.confirm("이 잔향을 삭제할까요?")) {
+        return;
+      }
+
+      await deletePublicRecord("logs", button.dataset.deletePublicLog, songId, button);
+    });
+  });
+
+  document.querySelectorAll("[data-delete-public-reflection]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (!window.confirm("이 여음을 삭제할까요?")) {
+        return;
+      }
+
+      await deletePublicRecord("reflections", button.dataset.deletePublicReflection, songId, button);
+    });
+  });
+}
+
+async function deletePublicRecord(collection, id, songId, button) {
+  const errorBox = button.closest(".public-record-card")?.querySelector(".public-record-error");
+
+  if (errorBox) {
+    errorBox.textContent = "";
+  }
+
+  try {
+    await api(`/api/${collection}/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await renderSongDetail(songId);
+  } catch (error) {
+    if (errorBox) {
+      errorBox.textContent = error.message;
+    }
+  }
 }
 
 function renderSongResult(song) {
@@ -814,12 +1202,37 @@ function renderSongResult(song) {
   `;
 }
 
-function renderEmotionOption(emotion) {
+function renderEmotionOption(emotion, selectedIds = []) {
+  const checked = selectedIds.includes(emotion.id) ? " checked" : "";
+
   return `
     <label class="emotion-option">
-      <input type="checkbox" name="emotion" value="${escapeHtml(emotion.id)}">
+      <input type="checkbox" name="emotion" value="${escapeHtml(emotion.id)}"${checked}>
       <span>${escapeHtml(emotion.label)}</span>
     </label>
+  `;
+}
+
+function renderSelectedSong(song) {
+  return `
+    <div class="selected-song is-visible">
+      ${renderSongArtwork(song)}
+      <span>
+        <strong>${escapeHtml(song.title)}</strong>
+        <small>${escapeHtml(song.artist)}${renderSongMeta(song)}</small>
+      </span>
+    </div>
+  `;
+}
+
+function showSelectedSong(container, song) {
+  container.classList.add("is-visible");
+  container.innerHTML = `
+    ${renderSongArtwork(song)}
+    <span>
+      <strong>${escapeHtml(song.title)}</strong>
+      <small>${escapeHtml(song.artist)}${renderSongMeta(song)}</small>
+    </span>
   `;
 }
 
@@ -847,6 +1260,29 @@ function renderSongArtwork(song) {
   return `<span class="song-disc" aria-hidden="true">${escapeHtml(songInitial(song))}</span>`;
 }
 
+function renderLargeSongArtwork(song) {
+  if (song.coverImageUrl) {
+    return `<img class="song-detail-cover" src="${escapeHtml(song.coverImageUrl)}" alt="" loading="lazy">`;
+  }
+
+  return `<span class="song-detail-disc" aria-hidden="true">${escapeHtml(songInitial(song))}</span>`;
+}
+
+async function initialSongFromQuery() {
+  const songId = new URLSearchParams(window.location.search).get("songId");
+
+  if (!songId) {
+    return null;
+  }
+
+  try {
+    const { song } = await api(`/api/songs/${encodeURIComponent(songId)}`);
+    return song;
+  } catch {
+    return null;
+  }
+}
+
 function renderSongSearchIdle(container) {
   container.innerHTML = `<div class="search-state">마음에 남은 노래를 검색해보세요.</div>`;
 }
@@ -871,6 +1307,27 @@ function songPayload(song) {
     previewUrl: song.previewUrl ?? "",
     releaseYear: song.releaseYear ?? song.year ?? null
   };
+}
+
+function bindEmotionLimit(form, errorBox) {
+  form.addEventListener("change", (event) => {
+    if (event.target.name !== "emotion") {
+      return;
+    }
+
+    const checked = [...form.querySelectorAll('input[name="emotion"]:checked')];
+
+    if (checked.length > maxEmotionCount) {
+      event.target.checked = false;
+      errorBox.textContent = `감정은 최대 ${maxEmotionCount}개까지 선택할 수 있어요.`;
+    } else {
+      errorBox.textContent = "";
+    }
+  });
+}
+
+function ownsRecord(record) {
+  return Boolean(currentUser?.id && record?.userId === currentUser.id);
 }
 
 function navigate(pathname) {
@@ -982,6 +1439,11 @@ function formatDate(date) {
     month: "short",
     day: "numeric"
   }).format(new Date(`${date}T00:00:00`));
+}
+
+function formatRecordDate(record) {
+  const date = record.listenedAt ?? record.createdAt?.slice(0, 10);
+  return date ? formatDate(date) : "";
 }
 
 function previewNote(note) {
