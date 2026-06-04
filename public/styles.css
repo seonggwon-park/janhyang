@@ -445,6 +445,7 @@ h2 {
 }
 
 .recent-section,
+.discovery-section,
 .archive-list {
   display: grid;
   gap: 18px;
@@ -486,6 +487,43 @@ h2 {
 .record-sections {
   display: grid;
   gap: 36px;
+}
+
+.browse-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.browse-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 8px 14px;
+  border: 1px solid rgba(92, 76, 62, 0.13);
+  border-radius: 999px;
+  color: var(--brown);
+  background: rgba(255, 252, 247, 0.62);
+  font-size: 14px;
+  font-weight: 720;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.browse-chip:hover,
+.browse-chip:focus-visible {
+  border-color: rgba(169, 104, 74, 0.28);
+  background: rgba(255, 252, 247, 0.92);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.home-song-search {
+  display: grid;
+  max-width: 660px;
+  gap: 12px;
 }
 
 .record-section {

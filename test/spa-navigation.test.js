@@ -55,6 +55,49 @@ test("home 여음 preview links to the full reflection detail", async () => {
   assert.doesNotMatch(spa.app.innerHTML, /삭제하기/);
 });
 
+test("home emotion chips navigate to emotion browse pages", async () => {
+  const spa = await createSpa();
+
+  assert.match(spa.app.innerHTML, /감정 둘러보기/);
+  assert.match(spa.app.innerHTML, /href="\/emotions\/%EA%B3%A0%EC%9A%94"/);
+
+  await spa.click("/emotions/%EA%B3%A0%EC%9A%94");
+
+  assert.equal(spa.location.pathname, "/emotions/%EA%B3%A0%EC%9A%94");
+  assert.match(spa.app.innerHTML, /고요으로 남은 노래들/);
+  assert.match(spa.app.innerHTML, /아주 긴 여음 본문 첫 문장/);
+});
+
+test("home music search resolves a result and opens song detail", async () => {
+  const spa = await createSpa();
+  const input = spa.element("#homeSongSearch");
+  const results = spa.element("#homeSongResults");
+
+  input.value = "ditto";
+  await input.dispatch("input", { target: input });
+
+  assert.match(results.innerHTML, /Ditto/);
+
+  await results.dispatch("click", {
+    target: {
+      closest(selector) {
+        if (selector !== "button[data-home-song]") {
+          return null;
+        }
+
+        return {
+          dataset: {
+            homeSong: JSON.stringify(externalSong())
+          }
+        };
+      }
+    }
+  });
+
+  assert.equal(spa.location.pathname, "/songs/song-1");
+  assert.match(spa.app.innerHTML, /테스트 곡/);
+});
+
 test("song detail 여음 preview links to the full reflection detail", async () => {
   const spa = await createSpa();
 
@@ -84,6 +127,11 @@ async function createSpa(options = {}) {
   const app = element("#app");
   const nav = element("nav");
   const location = createLocation("http://localhost/");
+  const instantSetTimeout = (handler) => {
+    handler();
+    return 0;
+  };
+  const instantClearTimeout = () => {};
   const localStorage = createStorage({
     "janhyang.auth": JSON.stringify({
       accessToken: "token-user-a",
@@ -114,7 +162,7 @@ async function createSpa(options = {}) {
   };
   const window = {
     addEventListener() {},
-    clearTimeout,
+    clearTimeout: instantClearTimeout,
     confirm: () => true,
     history: {
       pushState(_state, _title, href) {
@@ -124,18 +172,18 @@ async function createSpa(options = {}) {
     localStorage,
     location,
     scrollTo() {},
-    setTimeout
+    setTimeout: instantSetTimeout
   };
   const context = {
     FormData: FakeFormData,
     URL,
-    clearTimeout,
+    clearTimeout: instantClearTimeout,
     console,
     document,
     fetch: (input, init) => fakeFetch(input, init, options),
     Intl,
     JSON,
-    setTimeout,
+    setTimeout: instantSetTimeout,
     URLSearchParams,
     window
   };
@@ -174,6 +222,7 @@ async function createSpa(options = {}) {
       });
       await settle();
     },
+    element,
     location
   };
 }
@@ -186,16 +235,28 @@ class FakeElement {
       remove() {}
     };
     this.innerHTML = "";
+    this.listeners = new Map();
     this.value = "";
   }
 
-  addEventListener() {}
+  addEventListener(type, handler) {
+    this.listeners.set(type, handler);
+  }
 
   closest() {
     return null;
   }
 
   focus() {}
+
+  async dispatch(type, event = {}) {
+    const handler = this.listeners.get(type);
+
+    if (handler) {
+      await handler(event);
+      await settle();
+    }
+  }
 
   querySelector(selector) {
     return new FakeElement(`${this.selector} ${selector}`);
@@ -305,6 +366,40 @@ async function fakeFetch(input, _init, options = {}) {
     });
   }
 
+  if (path.startsWith("/api/emotions/") && path.endsWith("/records?limit=24")) {
+    return jsonResponse({
+      records: [{
+        body: longReflectionBody(),
+        createdAt: "2026-06-04T00:00:00.000Z",
+        emotionIds: ["calm"],
+        emotions: [{ id: "calm", label: "고요" }],
+        id: "reflection-1",
+        listenedAt: "2026-06-04",
+        recordType: "reflection",
+        song: {
+          artist: "테스트 아티스트",
+          id: "song-1",
+          title: "테스트 곡"
+        },
+        title: "긴 여음",
+        type: "여음"
+      }]
+    });
+  }
+
+  if (path === "/api/songs/search?q=ditto") {
+    return jsonResponse({ songs: [externalSong()] });
+  }
+
+  if (path === "/api/songs/resolve") {
+    return jsonResponse({
+      song: {
+        ...externalSong(),
+        id: "song-1"
+      }
+    });
+  }
+
   if (path === "/api/songs/song-1") {
     return jsonResponse({
       logs: [],
@@ -352,6 +447,18 @@ async function fakeFetch(input, _init, options = {}) {
 
 function longReflectionBody() {
   return "아주 긴 여음 본문 첫 문장. 중간 문장들이 천천히 이어지고, 마지막 문장까지 전문으로 남아 있어요.";
+}
+
+function externalSong() {
+  return {
+    albumName: "OMG - Single",
+    artist: "NewJeans",
+    coverImageUrl: "https://example.com/cover.jpg",
+    externalId: "1658078988",
+    externalSource: "itunes",
+    releaseYear: 2022,
+    title: "Ditto"
+  };
 }
 
 function jsonResponse(body, status = 200) {

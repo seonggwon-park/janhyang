@@ -114,6 +114,28 @@ export function createDatabase(options = {}) {
       .slice(0, safeLimit);
   }
 
+  async function listPublicRecordsByEmotion(label, limit = 24, user = null) {
+    const safeLimit = normalizeLimit(limit, 24, 60);
+    const emotionValues = emotionValuesForLabel(label);
+    const [logRows, reflectionRows] = await Promise.all([
+      listPublicRowsByEmotion(config, "music_logs", emotionValues, safeLimit),
+      listPublicRowsByEmotion(config, "music_reflections", emotionValues, safeLimit)
+    ]);
+    const records = [
+      ...logRows.map((row) => publicRecentLog(row, user)).filter(Boolean),
+      ...reflectionRows.map((row) => publicRecentReflection(row, user)).filter(Boolean)
+    ];
+
+    return records
+      .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
+      .slice(0, safeLimit);
+  }
+
+  async function resolvePublicSong(input) {
+    const song = await resolveSong(config, input);
+    return publicSong(song);
+  }
+
   async function listLogs(user) {
     const requestUrl = supabaseUrl(config, "music_logs");
     requestUrl.searchParams.set("select", "*,songs(*)");
@@ -331,9 +353,11 @@ export function createDatabase(options = {}) {
     getSongDetail,
     listAvailableEmotions,
     listLogs,
+    listPublicRecordsByEmotion,
     listPublicRecentRecords,
     listReflections,
     listSongs,
+    resolvePublicSong,
     updateLog,
     updateReflection
   };
@@ -481,6 +505,49 @@ async function listPublicRecentRows(config, table, limit) {
   requestUrl.searchParams.set("limit", String(limit));
 
   return supabaseRequest(config, requestUrl);
+}
+
+async function listPublicRowsByEmotion(config, table, emotionValues, limit) {
+  const rowMap = new Map();
+
+  await Promise.all([...emotionValues].map(async (emotionValue) => {
+    const requestUrl = supabaseUrl(config, table);
+    requestUrl.searchParams.set("select", "*,songs(*)");
+    requestUrl.searchParams.set("emotions", `cs.{${postgresArrayString(emotionValue)}}`);
+    requestUrl.searchParams.set("order", "created_at.desc");
+    requestUrl.searchParams.set("limit", String(limit));
+
+    const rows = await supabaseRequest(config, requestUrl);
+
+    rows.forEach((row) => {
+      rowMap.set(row.id, row);
+    });
+  }));
+
+  return [...rowMap.values()]
+    .sort((left, right) => String(right.created_at).localeCompare(String(left.created_at)))
+    .slice(0, limit);
+}
+
+function emotionValuesForLabel(label) {
+  const text = cleanText(label);
+  const comparableLabel = normalizeComparableLabel(text);
+  const values = new Set([text]);
+  const defaultEmotion = emotions.find((emotion) => (
+    normalizeComparableLabel(emotion.id) === comparableLabel ||
+    normalizeComparableLabel(emotion.label) === comparableLabel
+  ));
+
+  if (defaultEmotion) {
+    values.add(defaultEmotion.id);
+    values.add(defaultEmotion.label);
+  }
+
+  return values;
+}
+
+function postgresArrayString(value) {
+  return `"${cleanText(value).replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
 }
 
 function hydrateLog(row) {

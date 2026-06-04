@@ -75,6 +75,7 @@ async function renderRoute() {
   const detailMatch = pathname.match(/^\/logs\/([^/]+)$/);
   const reflectionEditMatch = pathname.match(/^\/reflections\/([^/]+)\/edit$/);
   const reflectionDetailMatch = pathname.match(/^\/reflections\/([^/]+)$/);
+  const emotionBrowseMatch = pathname.match(/^\/emotions\/([^/]+)$/);
   const songDetailMatch = pathname.match(/^\/songs\/([^/]+)$/);
   setCurrentNav(pathname);
 
@@ -137,6 +138,11 @@ async function renderRoute() {
     return;
   }
 
+  if (emotionBrowseMatch) {
+    await renderEmotionBrowse(decodeURIComponent(emotionBrowseMatch[1]));
+    return;
+  }
+
   if (logEditMatch) {
     await renderEditLog(decodeURIComponent(logEditMatch[1]));
     return;
@@ -172,6 +178,7 @@ async function renderHome() {
     currentUser ? api("/api/logs") : Promise.resolve({ logs: [] }),
     api("/api/records/recent?limit=6")
   ]);
+  const browseEmotions = homeBrowseEmotions(recentRecords);
   const uniqueSongCount = new Set(logs.map((log) => log.song.id)).size;
   const emotionCount = logs.reduce((total, log) => total + log.emotions.length, 0);
 
@@ -201,12 +208,36 @@ async function renderHome() {
     <section class="recent-section" aria-label="최근 남겨진 감정들">
       <div class="section-copy">
         <p class="eyebrow">최근의 기록</p>
-        <h2>최근 남겨진 감정들</h2>
+        <h2>최근 올라온 감정들</h2>
         <p class="section-description">짧게 남은 잔향과 오래 머문 여음을 함께 둘러보세요.</p>
       </div>
       ${recentRecords.length ? renderRecentRecordCards(recentRecords) : renderEmpty("아직 남겨진 감정이 없어요. 마음에 남은 노래가 생기면 잔향이나 여음으로 남겨보세요.")}
     </section>
+    <section class="discovery-section" aria-label="감정 둘러보기">
+      <div class="section-copy">
+        <p class="eyebrow">감정의 결</p>
+        <h2>감정 둘러보기</h2>
+        <p class="section-description">비슷한 감정으로 남겨진 노래들을 천천히 둘러보세요.</p>
+      </div>
+      ${browseEmotions.length ? renderEmotionBrowseChips(browseEmotions) : renderEmpty("아직 둘러볼 감정이 없어요.")}
+    </section>
+    <section class="discovery-section" aria-label="음악 찾아보기">
+      <div class="section-copy">
+        <p class="eyebrow">노래의 기록</p>
+        <h2>음악 찾아보기</h2>
+        <p class="section-description">마음에 남은 노래를 찾아, 그 노래에 쌓인 감정들을 열어보세요.</p>
+      </div>
+      <div class="home-song-search">
+        <div class="field">
+          <label for="homeSongSearch">노래 찾기</label>
+          <input id="homeSongSearch" type="search" autocomplete="off" placeholder="제목, 아티스트, 앨범">
+        </div>
+        <div id="homeSongResults" class="song-results"></div>
+      </div>
+    </section>
   `;
+
+  bindHomeSongSearch();
 }
 
 function renderAuthPage(mode) {
@@ -1073,6 +1104,35 @@ function renderHomeSigninNote() {
   return `<p class="home-signin-note">내 잔향을 보려면 로그인이 필요해요.</p>`;
 }
 
+function homeBrowseEmotions(records) {
+  const seen = new Set();
+  const combined = [
+    ...emotions,
+    ...records.flatMap((record) => record.emotions)
+  ];
+
+  return combined.filter((emotion) => {
+    const key = emotion.label;
+
+    if (!key || seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function renderEmotionBrowseChips(items) {
+  return `
+    <div class="browse-chip-row">
+      ${items.map((emotion) => `
+        <a class="browse-chip" href="/emotions/${encodeURIComponent(emotion.label)}" data-link>${escapeHtml(emotion.label)}</a>
+      `).join("")}
+    </div>
+  `;
+}
+
 function renderRecentRecordCards(records) {
   return `
     <div class="log-list recent-record-list">
@@ -1105,6 +1165,83 @@ function renderRecentRecordCards(records) {
         `;
       }).join("")}
     </div>
+  `;
+}
+
+async function renderEmotionBrowse(label) {
+  const { records } = await api(`/api/emotions/${encodeURIComponent(label)}/records?limit=24`);
+
+  app.innerHTML = `
+    <section class="page-head">
+      <div>
+        <p class="eyebrow">감정 둘러보기</p>
+        <h1>${escapeHtml(label)}으로 남은 노래들</h1>
+        <p class="page-description">이 감정으로 남겨진 잔향과 여음을 모아두었어요.</p>
+      </div>
+      <a class="ghost-button" href="/" data-link>홈으로</a>
+    </section>
+    <section class="archive-list">
+      ${records.length ? renderRecentRecordCards(records) : renderEmpty("아직 이 감정으로 남겨진 기록이 없어요.")}
+    </section>
+  `;
+}
+
+function bindHomeSongSearch() {
+  const searchInput = document.querySelector("#homeSongSearch");
+  const results = document.querySelector("#homeSongResults");
+
+  if (!searchInput || !results) {
+    return;
+  }
+
+  results.innerHTML = `<div class="search-state">마음에 남은 노래를 검색해보세요.</div>`;
+
+  searchInput.addEventListener("input", debounce(async () => {
+    const query = searchInput.value.trim();
+
+    if (query.length < minSongSearchLength) {
+      results.innerHTML = `<div class="search-state">마음에 남은 노래를 검색해보세요.</div>`;
+      return;
+    }
+
+    results.innerHTML = `<div class="search-state">노래를 찾는 중이에요.</div>`;
+
+    try {
+      const { songs } = await api(`/api/songs/search?q=${encodeURIComponent(query)}`);
+      results.innerHTML = songs.length ? songs.map(renderHomeSongResult).join("") : renderSongSearchEmpty();
+    } catch {
+      results.innerHTML = renderSongSearchEmpty();
+    }
+  }, 320));
+
+  results.addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-home-song]");
+
+    if (!button) {
+      return;
+    }
+
+    try {
+      const { song } = await api("/api/songs/resolve", {
+        method: "POST",
+        body: JSON.stringify({ song: songPayload(JSON.parse(button.dataset.homeSong)) })
+      });
+      await navigate(`/songs/${encodeURIComponent(song.id)}`);
+    } catch {
+      results.innerHTML = renderSongSearchEmpty();
+    }
+  });
+}
+
+function renderHomeSongResult(song) {
+  return `
+    <button class="song-result" type="button" data-home-song="${escapeHtml(JSON.stringify(song))}">
+      ${renderSongArtwork(song)}
+      <span class="song-result-copy">
+        <span class="song-title">${escapeHtml(song.title)}</span>
+        <small>${escapeHtml(song.artist)}${renderSongMeta(song)}</small>
+      </span>
+    </button>
   `;
 }
 

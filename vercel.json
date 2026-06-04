@@ -25,6 +25,10 @@
       "destination": "/index.html"
     },
     {
+      "source": "/emotions/:path*",
+      "destination": "/index.html"
+    },
+    {
       "source": "/records",
       "destination": "/index.html"
     },

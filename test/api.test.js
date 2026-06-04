@@ -224,6 +224,26 @@ test("public recent records combines logs and reflections newest first", async (
   assert.equal(body.records[1].note, "소리가 가라앉고 마음에 남았다.");
 });
 
+test("public emotion browse returns matching logs and reflections", async () => {
+  const body = await request(`/api/emotions/${encodeURIComponent("고요")}/records`, {}, null);
+
+  assert.ok(body.records.some((record) => record.recordType === "log" && record.note === "소리가 가라앉고 마음에 남았다."));
+  assert.ok(body.records.some((record) => record.recordType === "reflection" && record.title === "오래 남은 밤"));
+  assert.equal(body.records.some((record) => "userId" in record), false);
+});
+
+test("public song resolve saves external metadata for browsing song detail", async () => {
+  const resolved = await request("/api/songs/resolve", {
+    body: JSON.stringify({ song: externalSong() }),
+    method: "POST"
+  }, null);
+  const detail = await request(`/api/songs/${encodeURIComponent(resolved.song.id)}`, {}, null);
+
+  assert.equal(resolved.song.title, "Ditto");
+  assert.equal(resolved.song.externalSource, "itunes");
+  assert.equal(detail.song.id, resolved.song.id);
+});
+
 test("public recent records works when only reflections exist", async () => {
   const supabase = createMockSupabase([userA]);
   const database = createDatabase({
@@ -791,6 +811,9 @@ function applyFilters(rows, requestUrl) {
     if (value.startsWith("eq.")) {
       const expected = value.slice(3);
       filtered = filtered.filter((row) => String(row[key] ?? "") === expected);
+    } else if (value.startsWith("cs.")) {
+      const expected = parseArrayContainsValue(value);
+      filtered = filtered.filter((row) => Array.isArray(row[key]) && row[key].includes(expected));
     }
   }
 
@@ -802,6 +825,22 @@ function applyFilters(rows, requestUrl) {
 
   const limit = Number.parseInt(requestUrl.searchParams.get("limit"), 10);
   return Number.isFinite(limit) ? filtered.slice(0, limit) : filtered;
+}
+
+function parseArrayContainsValue(value) {
+  const match = value.match(/^cs\.\{(.+)\}$/);
+
+  if (!match) {
+    return "";
+  }
+
+  const item = match[1];
+
+  if (item.startsWith('"') && item.endsWith('"')) {
+    return item.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+  }
+
+  return item;
 }
 
 function jsonResponse(body, status = 200) {

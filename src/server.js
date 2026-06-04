@@ -91,6 +91,19 @@ async function handleApiRequest(request, response, requestUrl, auth, database, s
     return;
   }
 
+  const emotionRecordsMatch = pathname.match(/^\/api\/emotions\/([^/]+)\/records$/);
+
+  if (method === "GET" && emotionRecordsMatch) {
+    const user = await optionalUser(auth, request);
+    const records = await database.listPublicRecordsByEmotion(
+      decodeURIComponent(emotionRecordsMatch[1]),
+      requestUrl.searchParams.get("limit") ?? 24,
+      user
+    );
+    sendJson(response, 200, { records });
+    return;
+  }
+
   if (method === "POST" && pathname === "/api/auth/login") {
     const body = await readJsonBody(request);
     sendJson(response, 200, await auth.login(body));
@@ -144,6 +157,13 @@ async function handleApiRequest(request, response, requestUrl, auth, database, s
     }
 
     sendJson(response, 200, { songs });
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/songs/resolve") {
+    const body = await readJsonBody(request);
+    const song = await database.resolvePublicSong(body);
+    sendJson(response, 200, { song });
     return;
   }
 
