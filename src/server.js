@@ -106,13 +106,15 @@ async function handleApiRequest(request, response, requestUrl, auth, database, s
 
   if (method === "POST" && pathname === "/api/auth/login") {
     const body = await readJsonBody(request);
-    sendJson(response, 200, await auth.login(body));
+    const session = await auth.login(body);
+    sendJson(response, 200, await sessionWithProfile(database, session));
     return;
   }
 
   if (method === "POST" && pathname === "/api/auth/signup") {
     const body = await readJsonBody(request);
-    sendJson(response, 201, await auth.signup(body));
+    const session = await auth.signup(body);
+    sendJson(response, 201, await sessionWithProfile(database, session));
     return;
   }
 
@@ -122,7 +124,23 @@ async function handleApiRequest(request, response, requestUrl, auth, database, s
   }
 
   if (method === "GET" && pathname === "/api/auth/me") {
-    sendJson(response, 200, { user: await auth.requireUser(request) });
+    const user = await auth.requireUser(request);
+    sendJson(response, 200, { user: await userWithProfile(database, user) });
+    return;
+  }
+
+  if (method === "GET" && pathname === "/api/profile") {
+    const user = await auth.requireUser(request);
+    const profile = await database.ensureProfile(user);
+    sendJson(response, 200, { profile });
+    return;
+  }
+
+  if ((method === "PATCH" || method === "PUT") && pathname === "/api/profile") {
+    const user = await auth.requireUser(request);
+    const body = await readJsonBody(request);
+    const profile = await database.updateProfile(body, user);
+    sendJson(response, 200, { profile, user: privateUser(user, profile) });
     return;
   }
 
@@ -317,6 +335,29 @@ async function optionalUser(auth, request) {
   } catch {
     return null;
   }
+}
+
+async function sessionWithProfile(database, session) {
+  const profile = await database.ensureProfile(session.user);
+
+  return {
+    ...session,
+    user: privateUser(session.user, profile)
+  };
+}
+
+async function userWithProfile(database, user) {
+  const profile = await database.ensureProfile(user);
+  return privateUser(user, profile);
+}
+
+function privateUser(user, profile) {
+  return {
+    email: user.email ?? "",
+    id: user.id,
+    nickname: profile?.nickname ?? "",
+    profile: profile ?? null
+  };
 }
 
 async function readJsonBody(request) {

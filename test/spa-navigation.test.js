@@ -13,6 +13,7 @@ test("SPA navigation renders the 잔향 creation route", async () => {
   assert.equal(spa.location.pathname, "/logs/new");
   assert.match(spa.app.innerHTML, /오늘의 잔향/);
   assert.match(spa.app.innerHTML, /id="logForm"/);
+  assert.match(spa.app.innerHTML, /익명으로 남기기/);
 });
 
 test("SPA navigation renders the 여음 creation route", async () => {
@@ -23,6 +24,20 @@ test("SPA navigation renders the 여음 creation route", async () => {
   assert.equal(spa.location.pathname, "/reflections/new");
   assert.match(spa.app.innerHTML, /여음 남기기/);
   assert.match(spa.app.innerHTML, /id="reflectionForm"/);
+  assert.match(spa.app.innerHTML, /익명으로 남기기/);
+});
+
+test("navigation shows nickname and opens account settings", async () => {
+  const spa = await createSpa();
+
+  assert.match(spa.nav.innerHTML, /바람/);
+  assert.doesNotMatch(spa.nav.innerHTML, /a@example.com/);
+
+  await spa.click("/account");
+
+  assert.equal(spa.location.pathname, "/account");
+  assert.match(spa.app.innerHTML, /내 계정/);
+  assert.match(spa.app.innerHTML, /value="바람"/);
 });
 
 test("SPA navigation keeps song query params for create CTAs", async () => {
@@ -137,7 +152,12 @@ async function createSpa(options = {}) {
       accessToken: "token-user-a",
       user: {
         email: "a@example.com",
-        id: "aaaaaaaa-0000-4000-8000-000000000001"
+        id: "aaaaaaaa-0000-4000-8000-000000000001",
+        nickname: "바람",
+        profile: {
+          id: "aaaaaaaa-0000-4000-8000-000000000001",
+          nickname: "바람"
+        }
       }
     })
   });
@@ -223,7 +243,8 @@ async function createSpa(options = {}) {
       await settle();
     },
     element,
-    location
+    location,
+    nav
   };
 }
 
@@ -332,7 +353,21 @@ async function fakeFetch(input, _init, options = {}) {
     return jsonResponse({
       user: {
         email: "a@example.com",
-        id: "aaaaaaaa-0000-4000-8000-000000000001"
+        id: "aaaaaaaa-0000-4000-8000-000000000001",
+        nickname: "바람",
+        profile: {
+          id: "aaaaaaaa-0000-4000-8000-000000000001",
+          nickname: "바람"
+        }
+      }
+    });
+  }
+
+  if (path === "/api/profile") {
+    return jsonResponse({
+      profile: {
+        id: "aaaaaaaa-0000-4000-8000-000000000001",
+        nickname: "바람"
       }
     });
   }

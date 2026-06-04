@@ -54,6 +54,10 @@ npm run dev
 
 `music_logs`와 `music_reflections`에는 `user_id`가 있으며 Supabase Auth의 `auth.users(id)`를 참조합니다. 새 잔향과 여음은 서버가 현재 access token을 확인한 뒤 해당 사용자의 `user_id`로 저장합니다.
 
+`profiles`에는 공개 화면에 표시할 닉네임만 저장합니다. 이메일은 공개 기록 응답에 포함하지 않습니다. 이번 버전에서는 닉네임 중복을 막지 않고, 각 사용자가 자기 프로필만 만들거나 수정할 수 있게 RLS로 보호합니다.
+
+`music_logs`와 `music_reflections`에는 `is_anonymous`가 있습니다. 기본값은 `false`라서 기존 기록은 닉네임으로 표시되고, 익명으로 남긴 기록은 공개 화면에서 `누군가의 잔향` 또는 `누군가의 여음`으로 표시됩니다.
+
 두 사용자 기록 테이블에는 RLS가 켜져 있고, 인증된 사용자는 자기 `user_id`와 일치하는 기록만 select, insert, update, delete 할 수 있습니다. `songs`는 사용자별 감상이 아니라 공유 곡 메타데이터로 유지합니다.
 
 이미 배포된 DB에 `user_id` 없는 기존 잔향이 있다면 스키마 실행 후 RLS 때문에 보이지 않습니다. 가짜 사용자 id를 만들지 말고, 필요한 경우 실제 사용자에게 수동으로 이관하거나 삭제한 뒤 `user_id`를 `not null`로 강제하세요.

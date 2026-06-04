@@ -180,6 +180,16 @@ nav a[aria-current="page"] {
   text-overflow: ellipsis;
 }
 
+nav a.account-pill {
+  color: var(--soft);
+}
+
+nav a.account-pill:hover,
+nav a.account-pill:focus-visible {
+  color: var(--brown-dark);
+  background: rgba(111, 79, 59, 0.08);
+}
+
 .nav-logout {
   padding: 8px 13px;
   border: 0;
@@ -588,6 +598,12 @@ h2 {
   font-size: 12px;
 }
 
+.detail-author {
+  margin: -4px 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .recent-card-meta {
   display: flex;
   flex-wrap: wrap;
@@ -607,6 +623,13 @@ h2 {
   background: rgba(255, 250, 243, 0.72);
   font-size: 12px;
   font-weight: 760;
+}
+
+.record-author {
+  flex: 1;
+  min-width: 90px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .recent-record-card .note-preview {
@@ -838,6 +861,26 @@ a.song-title:hover,
   color: var(--brown-dark);
   font-size: 19px;
   line-height: 1.85;
+}
+
+.anonymous-field {
+  padding: 14px 16px;
+  border-radius: 8px;
+  background: rgba(255, 252, 247, 0.56);
+}
+
+.checkbox-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  color: var(--brown-dark);
+}
+
+.field .anonymous-checkbox {
+  width: 18px;
+  min-height: 18px;
+  accent-color: var(--brown);
 }
 
 .field input::placeholder,

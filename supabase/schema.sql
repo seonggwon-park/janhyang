@@ -17,12 +17,22 @@ create unique index if not exists songs_external_source_id_unique
   on public.songs (external_source, external_id)
   where external_source is not null and external_id is not null;
 
+create table if not exists public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  nickname text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint profiles_nickname_length_check
+    check (char_length(btrim(nickname)) between 1 and 20)
+);
+
 create table if not exists public.music_logs (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   song_id uuid not null references public.songs(id) on delete cascade,
   emotions text[] not null,
   note text not null,
+  is_anonymous boolean not null default false,
   listened_at date,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -35,6 +45,7 @@ create table if not exists public.music_reflections (
   emotions text[] not null,
   title text,
   body text not null,
+  is_anonymous boolean not null default false,
   listened_at date,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -54,6 +65,12 @@ create unique index if not exists user_emotions_user_label_unique
 
 alter table public.music_logs
   add column if not exists user_id uuid references auth.users(id) on delete cascade;
+
+alter table public.music_logs
+  add column if not exists is_anonymous boolean not null default false;
+
+alter table public.music_reflections
+  add column if not exists is_anonymous boolean not null default false;
 
 do $$
 begin
@@ -86,6 +103,9 @@ create index if not exists music_reflections_user_created_at_idx
 create index if not exists user_emotions_user_created_at_idx
   on public.user_emotions (user_id, created_at asc);
 
+create index if not exists profiles_nickname_idx
+  on public.profiles (lower(btrim(nickname)));
+
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -101,6 +121,11 @@ create trigger songs_set_updated_at
 before update on public.songs
 for each row execute function public.set_updated_at();
 
+drop trigger if exists profiles_set_updated_at on public.profiles;
+create trigger profiles_set_updated_at
+before update on public.profiles
+for each row execute function public.set_updated_at();
+
 drop trigger if exists music_logs_set_updated_at on public.music_logs;
 create trigger music_logs_set_updated_at
 before update on public.music_logs
@@ -111,9 +136,32 @@ create trigger music_reflections_set_updated_at
 before update on public.music_reflections
 for each row execute function public.set_updated_at();
 
+alter table public.profiles enable row level security;
 alter table public.music_logs enable row level security;
 alter table public.music_reflections enable row level security;
 alter table public.user_emotions enable row level security;
+
+drop policy if exists profiles_select_public_display on public.profiles;
+create policy profiles_select_public_display
+on public.profiles
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists profiles_insert_own on public.profiles;
+create policy profiles_insert_own
+on public.profiles
+for insert
+to authenticated
+with check (id = auth.uid());
+
+drop policy if exists profiles_update_own on public.profiles;
+create policy profiles_update_own
+on public.profiles
+for update
+to authenticated
+using (id = auth.uid())
+with check (id = auth.uid());
 
 drop policy if exists music_logs_select_own on public.music_logs;
 create policy music_logs_select_own

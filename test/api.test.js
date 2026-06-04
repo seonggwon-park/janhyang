@@ -122,6 +122,31 @@ test("Vercel entrypoint exports a default handler and supports rewritten API pat
   assert.equal(body.songs[0].title, "Ditto");
 });
 
+test("authenticated users can update nickname profiles", async () => {
+  const updated = await request("/api/profile", {
+    body: JSON.stringify({ nickname: "바람" }),
+    method: "PATCH"
+  });
+  const profile = await request("/api/profile");
+  const me = await request("/api/auth/me");
+
+  assert.equal(updated.profile.nickname, "바람");
+  assert.equal(updated.user.nickname, "바람");
+  assert.equal(profile.profile.nickname, "바람");
+  assert.equal(me.user.nickname, "바람");
+  assert.equal(me.user.profile.nickname, "바람");
+});
+
+test("signup creates a fallback profile without using email as display name", async () => {
+  const session = await request("/api/auth/signup", {
+    body: JSON.stringify({ email: "new@example.com", password: "password-new" }),
+    method: "POST"
+  }, null);
+
+  assert.equal(session.user.nickname, "잔향 손님");
+  assert.equal(session.user.profile.nickname, "잔향 손님");
+});
+
 test("requires authentication for user-owned log routes", async () => {
   const list = await rawRequest("/api/logs", {}, null);
   const create = await rawRequest("/api/logs", {
@@ -348,6 +373,38 @@ test("only returns logs owned by the authenticated user", async () => {
   assert.equal(otherDetail.status, 404);
 });
 
+test("public record display uses nickname unless the record is anonymous", async () => {
+  const namedLog = await createExternalLog("닉네임으로 남기는 잔향.", { isAnonymous: false });
+  const anonymousLog = await createExternalLog("익명으로 남기는 잔향.", { isAnonymous: true });
+  const namedReflection = await createExternalReflection("닉네임으로 남기는 여음.", { isAnonymous: false });
+  const anonymousReflection = await createExternalReflection("익명으로 남기는 여음.", { isAnonymous: true });
+  const songDetail = await request(`/api/songs/${encodeURIComponent(namedLog.log.song.id)}`, {}, null);
+  const recent = await request("/api/records/recent", {}, null);
+
+  const publicNamedLog = songDetail.logs.find((log) => log.id === namedLog.log.id);
+  const publicAnonymousLog = songDetail.logs.find((log) => log.id === anonymousLog.log.id);
+  const publicNamedReflection = songDetail.reflections.find((reflection) => reflection.id === namedReflection.reflection.id);
+  const publicAnonymousReflection = songDetail.reflections.find((reflection) => reflection.id === anonymousReflection.reflection.id);
+
+  assert.equal(namedLog.log.isAnonymous, false);
+  assert.equal(anonymousLog.log.isAnonymous, true);
+  assert.equal(namedReflection.reflection.isAnonymous, false);
+  assert.equal(anonymousReflection.reflection.isAnonymous, true);
+  assert.equal(publicNamedLog.authorLabel, "바람");
+  assert.equal(publicNamedLog.authorNickname, "바람");
+  assert.equal(publicNamedLog.isAnonymous, false);
+  assert.equal(publicAnonymousLog.authorLabel, "누군가의 잔향");
+  assert.equal(publicAnonymousLog.authorNickname, "");
+  assert.equal(publicAnonymousLog.isAnonymous, true);
+  assert.equal(publicNamedReflection.authorLabel, "바람");
+  assert.equal(publicNamedReflection.authorNickname, "바람");
+  assert.equal(publicAnonymousReflection.authorLabel, "누군가의 여음");
+  assert.equal(publicAnonymousReflection.authorNickname, "");
+  assert.equal(recent.records.some((record) => record.authorLabel === "바람"), true);
+  assert.equal(recent.records.some((record) => record.authorLabel === "누군가의 여음"), true);
+  assert.equal(recent.records.some((record) => String(record.authorLabel).includes("@")), false);
+});
+
 test("keeps reflection lists private while allowing public redacted reflection detail", async () => {
   const longBody = Array(4).fill("다른 사람의 목록에는 보이면 안 되지만, 공개 미리보기에서 들어오면 전문을 읽을 수 있는 긴 여음.").join("\n");
   const created = await createExternalReflection(longBody);
@@ -387,8 +444,10 @@ test("song detail publicly lists records for the song while my pages stay privat
   const ownerReflection = ownerDetail.reflections.find((reflection) => reflection.id === createdReflection.reflection.id);
 
   assert.equal(anonymousDetail.song.id, songId);
-  assert.equal(anonymousLog.authorLabel, "누군가의 잔향");
-  assert.equal(anonymousReflection.authorLabel, "누군가의 여음");
+  assert.equal(anonymousLog.authorLabel, "바람");
+  assert.equal(anonymousReflection.authorLabel, "바람");
+  assert.equal(anonymousLog.isAnonymous, false);
+  assert.equal(anonymousReflection.isAnonymous, false);
   assert.equal(anonymousLog.ownedByCurrentUser, false);
   assert.equal(anonymousReflection.ownedByCurrentUser, false);
   assert.equal("userId" in anonymousLog, false);
@@ -431,11 +490,12 @@ test("update and delete only work for the owning user", async () => {
   assert.equal(otherUpdate.status, 404);
 
   const updated = await request(`/api/logs/${encodeURIComponent(created.log.id)}`, {
-    body: JSON.stringify({ note: "조용히 다시 적은 잔향." }),
+    body: JSON.stringify({ isAnonymous: true, note: "조용히 다시 적은 잔향." }),
     method: "PATCH"
   });
 
   assert.equal(updated.log.note, "조용히 다시 적은 잔향.");
+  assert.equal(updated.log.isAnonymous, true);
 
   const otherDelete = await rawRequest(`/api/logs/${encodeURIComponent(created.log.id)}`, {
     method: "DELETE"
@@ -465,6 +525,7 @@ test("reflection update and delete only work for the owning user", async () => {
     body: JSON.stringify({
       body: "천천히 다시 적은 긴 여음.",
       emotionIds: ["warmth"],
+      isAnonymous: true,
       listenedAt: "2026-06-03",
       title: "다시 적은 여음"
     }),
@@ -473,6 +534,7 @@ test("reflection update and delete only work for the owning user", async () => {
 
   assert.equal(updated.reflection.body, "천천히 다시 적은 긴 여음.");
   assert.equal(updated.reflection.title, "다시 적은 여음");
+  assert.equal(updated.reflection.isAnonymous, true);
   assert.deepEqual(updated.reflection.emotions.map((emotion) => emotion.id), ["warmth"]);
 
   const otherDelete = await rawRequest(`/api/reflections/${encodeURIComponent(created.reflection.id)}`, {
@@ -537,26 +599,28 @@ test("rejects reflections without a body after authentication", async () => {
   assert.match(response.body.error, /감상/);
 });
 
-async function createExternalLog(note) {
+async function createExternalLog(note, overrides = {}) {
   return request("/api/logs", {
     body: JSON.stringify({
       emotionIds: ["calm"],
       listenedAt: "2026-06-01",
       note,
-      song: externalSong()
+      song: externalSong(),
+      ...overrides
     }),
     method: "POST"
   });
 }
 
-async function createExternalReflection(body) {
+async function createExternalReflection(body, overrides = {}) {
   return request("/api/reflections", {
     body: JSON.stringify({
       body,
       emotionIds: ["calm"],
       listenedAt: "2026-06-02",
       song: externalSong(),
-      title: "긴 여음"
+      title: "긴 여음",
+      ...overrides
     }),
     method: "POST"
   });
@@ -571,6 +635,7 @@ function createMockSupabase(seedUsers = []) {
     nextTimestamp: Date.parse("2026-06-04T00:00:00.000Z"),
     nextTokenId: 1,
     nextUserEmotionId: 1,
+    profiles: [],
     reflections: [],
     sessions: new Map(),
     songs: [],
@@ -655,6 +720,31 @@ function createMockSupabase(seedUsers = []) {
         return jsonResponse(rows);
       }
 
+      if (options.method === "POST" && table === "profiles") {
+        const rows = JSON.parse(options.body).map((profile) => {
+          const now = nextTimestamp(state);
+          const row = {
+            created_at: now,
+            updated_at: now,
+            ...profile
+          };
+          state.profiles.push(row);
+          return row;
+        });
+
+        return jsonResponse(rows);
+      }
+
+      if ((options.method === "PATCH" || options.method === "PUT") && table === "profiles") {
+        const patch = JSON.parse(options.body);
+        const rows = applyFilters(state.profiles, requestUrl).map((profile) => {
+          Object.assign(profile, patch, { updated_at: nextTimestamp(state) });
+          return profile;
+        });
+
+        return jsonResponse(rows);
+      }
+
       if ((options.method === "PATCH" || options.method === "PUT") && table === "music_logs") {
         const patch = JSON.parse(options.body);
         const rows = applyFilters(state.logs, requestUrl).map((log) => {
@@ -689,6 +779,10 @@ function createMockSupabase(seedUsers = []) {
 
       if (table === "songs") {
         return jsonResponse(applyFilters(state.songs, requestUrl));
+      }
+
+      if (table === "profiles") {
+        return jsonResponse(applyFilters(state.profiles, requestUrl));
       }
 
       if (table === "music_logs") {
@@ -811,6 +905,9 @@ function applyFilters(rows, requestUrl) {
     if (value.startsWith("eq.")) {
       const expected = value.slice(3);
       filtered = filtered.filter((row) => String(row[key] ?? "") === expected);
+    } else if (value.startsWith("in.")) {
+      const expected = parseInValues(value);
+      filtered = filtered.filter((row) => expected.includes(String(row[key] ?? "")));
     } else if (value.startsWith("cs.")) {
       const expected = parseArrayContainsValue(value);
       filtered = filtered.filter((row) => Array.isArray(row[key]) && row[key].includes(expected));
@@ -825,6 +922,11 @@ function applyFilters(rows, requestUrl) {
 
   const limit = Number.parseInt(requestUrl.searchParams.get("limit"), 10);
   return Number.isFinite(limit) ? filtered.slice(0, limit) : filtered;
+}
+
+function parseInValues(value) {
+  const match = value.match(/^in\.\((.*)\)$/);
+  return match ? match[1].split(",").map((item) => item.trim()).filter(Boolean) : [];
 }
 
 function parseArrayContainsValue(value) {

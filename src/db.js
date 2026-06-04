@@ -1,6 +1,7 @@
 const maxNoteLength = 240;
 const maxEmotionCount = 3;
 const maxCustomEmotionLength = 24;
+const maxNicknameLength = 20;
 
 export const emotions = [
   { id: "comfort", label: "위로" },
@@ -79,6 +80,61 @@ export function createDatabase(options = {}) {
     }
   }
 
+  async function ensureProfile(user) {
+    const existing = await findProfile(config, user.id);
+
+    if (existing) {
+      return publicProfile(existing);
+    }
+
+    const nickname = normalizeNickname(cleanText(user?.nickname) || fallbackNickname());
+
+    try {
+      const rows = await insertRows(config, "profiles", [{
+        id: user.id,
+        nickname
+      }]);
+
+      return publicProfile(rows[0]);
+    } catch {
+      const created = await findProfile(config, user.id);
+
+      if (created) {
+        return publicProfile(created);
+      }
+
+      throw configurationError("프로필을 준비하지 못했어요. Supabase profiles 테이블을 확인해주세요.");
+    }
+  }
+
+  async function getProfile(user) {
+    const profile = await findProfile(config, user.id);
+    return publicProfile(profile);
+  }
+
+  async function updateProfile(input, user) {
+    const nickname = normalizeNickname(input?.nickname);
+    const requestUrl = supabaseUrl(config, "profiles");
+    requestUrl.searchParams.set("id", `eq.${user.id}`);
+
+    const rows = await supabaseRequest(config, requestUrl, {
+      body: JSON.stringify({ nickname }),
+      headers: { Prefer: "return=representation" },
+      method: "PATCH"
+    });
+
+    if (rows[0]) {
+      return publicProfile(rows[0]);
+    }
+
+    const insertedRows = await insertRows(config, "profiles", [{
+      id: user.id,
+      nickname
+    }]);
+
+    return publicProfile(insertedRows[0]);
+  }
+
   async function getSongDetail(id, user = null) {
     const song = await findSong(config, { id });
 
@@ -90,10 +146,14 @@ export function createDatabase(options = {}) {
       listPublicRowsForSong(config, "music_logs", song.id),
       listPublicRowsForSong(config, "music_reflections", song.id)
     ]);
+    const [profiledLogRows, profiledReflectionRows] = await Promise.all([
+      attachProfilesToRows(config, logRows),
+      attachProfilesToRows(config, reflectionRows)
+    ]);
 
     return {
-      logs: logRows.map((row) => publicLogForSong(row, user)),
-      reflections: reflectionRows.map((row) => publicReflectionForSong(row, user)),
+      logs: profiledLogRows.map((row) => publicLogForSong(row, user)),
+      reflections: profiledReflectionRows.map((row) => publicReflectionForSong(row, user)),
       song: publicSong(song)
     };
   }
@@ -104,9 +164,13 @@ export function createDatabase(options = {}) {
       listPublicRecentRows(config, "music_logs", safeLimit),
       listPublicRecentRows(config, "music_reflections", safeLimit)
     ]);
+    const [profiledLogRows, profiledReflectionRows] = await Promise.all([
+      attachProfilesToRows(config, logRows),
+      attachProfilesToRows(config, reflectionRows)
+    ]);
     const records = [
-      ...logRows.map((row) => publicRecentLog(row, user)).filter(Boolean),
-      ...reflectionRows.map((row) => publicRecentReflection(row, user)).filter(Boolean)
+      ...profiledLogRows.map((row) => publicRecentLog(row, user)).filter(Boolean),
+      ...profiledReflectionRows.map((row) => publicRecentReflection(row, user)).filter(Boolean)
     ];
 
     return records
@@ -121,9 +185,13 @@ export function createDatabase(options = {}) {
       listPublicRowsByEmotion(config, "music_logs", emotionValues, safeLimit),
       listPublicRowsByEmotion(config, "music_reflections", emotionValues, safeLimit)
     ]);
+    const [profiledLogRows, profiledReflectionRows] = await Promise.all([
+      attachProfilesToRows(config, logRows),
+      attachProfilesToRows(config, reflectionRows)
+    ]);
     const records = [
-      ...logRows.map((row) => publicRecentLog(row, user)).filter(Boolean),
-      ...reflectionRows.map((row) => publicRecentReflection(row, user)).filter(Boolean)
+      ...profiledLogRows.map((row) => publicRecentLog(row, user)).filter(Boolean),
+      ...profiledReflectionRows.map((row) => publicRecentReflection(row, user)).filter(Boolean)
     ];
 
     return records
@@ -161,6 +229,7 @@ export function createDatabase(options = {}) {
     const emotionIds = await normalizeEmotionIdsForUser(config, input?.emotionIds, user);
     const note = cleanText(input?.note);
     const listenedAt = normalizeDate(input?.listenedAt);
+    const isAnonymous = normalizeBoolean(input?.isAnonymous);
 
     if (!emotionIds.length) {
       throw validationError("감정을 하나 이상 선택해 주세요.");
@@ -184,6 +253,7 @@ export function createDatabase(options = {}) {
       user_id: user.id,
       emotions: emotionIds,
       note,
+      is_anonymous: isAnonymous,
       listened_at: listenedAt
     }]);
 
@@ -202,6 +272,7 @@ export function createDatabase(options = {}) {
       : await normalizeEmotionIdsForUser(config, input.emotionIds, user);
     const note = input?.note === undefined ? current.note : cleanText(input.note);
     const listenedAt = input?.listenedAt === undefined ? current.listenedAt : normalizeDate(input.listenedAt);
+    const isAnonymous = input?.isAnonymous === undefined ? current.isAnonymous : normalizeBoolean(input.isAnonymous);
 
     if (!emotionIds.length) {
       throw validationError("감정을 하나 이상 선택해 주세요.");
@@ -226,6 +297,7 @@ export function createDatabase(options = {}) {
     await supabaseRequest(config, requestUrl, {
       body: JSON.stringify({
         emotions: emotionIds,
+        is_anonymous: isAnonymous,
         note,
         listened_at: listenedAt
       }),
@@ -277,16 +349,19 @@ export function createDatabase(options = {}) {
     requestUrl.searchParams.set("limit", "1");
 
     const reflections = await supabaseRequest(config, requestUrl);
-    return reflections[0] ? publicReflectionDetail(reflections[0], user) : null;
+    const profiledRows = await attachProfilesToRows(config, reflections);
+    return profiledRows[0] ? publicReflectionDetail(profiledRows[0], user) : null;
   }
 
   async function createReflection(input, user) {
     const customEmotionLabels = await userCustomEmotionLabels(config, user);
     const reflection = normalizeReflectionInput(input, customEmotionLabels);
+    const isAnonymous = normalizeBoolean(input?.isAnonymous);
     const song = await resolveSong(config, input);
     const rows = await insertRows(config, "music_reflections", [{
       body: reflection.body,
       emotions: reflection.emotionIds,
+      is_anonymous: isAnonymous,
       listened_at: reflection.listenedAt,
       song_id: song.id,
       title: reflection.title,
@@ -310,6 +385,7 @@ export function createDatabase(options = {}) {
       listenedAt: input?.listenedAt === undefined ? current.listenedAt : input.listenedAt,
       title: input?.title === undefined ? current.title : input.title
     }, [...customEmotionLabels, ...current.emotionIds]);
+    const isAnonymous = input?.isAnonymous === undefined ? current.isAnonymous : normalizeBoolean(input.isAnonymous);
     const requestUrl = supabaseUrl(config, "music_reflections");
     requestUrl.searchParams.set("id", `eq.${id}`);
     requestUrl.searchParams.set("user_id", `eq.${user.id}`);
@@ -318,6 +394,7 @@ export function createDatabase(options = {}) {
       body: JSON.stringify({
         body: reflection.body,
         emotions: reflection.emotionIds,
+        is_anonymous: isAnonymous,
         listened_at: reflection.listenedAt,
         title: reflection.title
       }),
@@ -347,7 +424,9 @@ export function createDatabase(options = {}) {
     createUserEmotion,
     deleteLog,
     deleteReflection,
+    ensureProfile,
     getLog,
+    getProfile,
     getPublicReflection,
     getReflection,
     getSongDetail,
@@ -359,6 +438,7 @@ export function createDatabase(options = {}) {
     listSongs,
     resolvePublicSong,
     updateLog,
+    updateProfile,
     updateReflection
   };
 }
@@ -469,6 +549,40 @@ async function insertRows(config, table, rows) {
   });
 }
 
+async function findProfile(config, userId) {
+  const requestUrl = supabaseUrl(config, "profiles");
+  requestUrl.searchParams.set("select", "id,nickname,created_at,updated_at");
+  requestUrl.searchParams.set("id", `eq.${userId}`);
+  requestUrl.searchParams.set("limit", "1");
+
+  const profiles = await supabaseRequest(config, requestUrl);
+  return profiles[0] ?? null;
+}
+
+async function listProfilesByIds(config, userIds) {
+  const ids = [...new Set(userIds.map(cleanText).filter(Boolean))];
+
+  if (!ids.length) {
+    return [];
+  }
+
+  const requestUrl = supabaseUrl(config, "profiles");
+  requestUrl.searchParams.set("select", "id,nickname");
+  requestUrl.searchParams.set("id", `in.(${ids.join(",")})`);
+
+  return supabaseRequest(config, requestUrl);
+}
+
+async function attachProfilesToRows(config, rows) {
+  const profiles = await listProfilesByIds(config, rows.map((row) => row.user_id));
+  const profilesById = new Map(profiles.map((profile) => [profile.id, profile]));
+
+  return rows.map((row) => ({
+    ...row,
+    profile: profilesById.get(row.user_id) ?? null
+  }));
+}
+
 async function listUserEmotionRows(config, userId) {
   const requestUrl = supabaseUrl(config, "user_emotions");
   requestUrl.searchParams.set("select", "*");
@@ -563,6 +677,7 @@ function hydrateLog(row) {
     userId: row.user_id,
     emotionIds,
     emotions: emotionIds.map(publicEmotion),
+    isAnonymous: Boolean(row.is_anonymous),
     note: row.note,
     listenedAt: row.listened_at,
     createdAt: row.created_at,
@@ -583,7 +698,9 @@ function publicLogForSong(row, user) {
     listenedAt: row.listened_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    authorLabel: "누군가의 잔향",
+    authorLabel: publicAuthorLabel(row, "log"),
+    authorNickname: publicAuthorNickname(row),
+    isAnonymous: Boolean(row.is_anonymous),
     ownedByCurrentUser: Boolean(user?.id && row.user_id === user.id)
   };
 }
@@ -614,6 +731,7 @@ function hydrateReflection(row) {
     userId: row.user_id,
     emotionIds,
     emotions: emotionIds.map(publicEmotion),
+    isAnonymous: Boolean(row.is_anonymous),
     title: row.title ?? "",
     body: row.body,
     listenedAt: row.listened_at,
@@ -636,7 +754,9 @@ function publicReflectionForSong(row, user) {
     listenedAt: row.listened_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    authorLabel: "누군가의 여음",
+    authorLabel: publicAuthorLabel(row, "reflection"),
+    authorNickname: publicAuthorNickname(row),
+    isAnonymous: Boolean(row.is_anonymous),
     ownedByCurrentUser: Boolean(user?.id && row.user_id === user.id)
   };
 }
@@ -683,6 +803,35 @@ function publicUserEmotion(row) {
     label: row.label,
     userEmotionId: row.id
   };
+}
+
+function publicProfile(row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    nickname: row.nickname ?? "",
+    createdAt: row.created_at ?? null,
+    updatedAt: row.updated_at ?? null
+  };
+}
+
+function publicAuthorLabel(row, type) {
+  if (Boolean(row.is_anonymous)) {
+    return type === "reflection" ? "누군가의 여음" : "누군가의 잔향";
+  }
+
+  return publicAuthorNickname(row) || "이름 없는 사용자";
+}
+
+function publicAuthorNickname(row) {
+  if (Boolean(row.is_anonymous)) {
+    return "";
+  }
+
+  return cleanText(row.profile?.nickname ?? row.profiles?.nickname);
 }
 
 function publicSong(row) {
@@ -855,6 +1004,28 @@ function normalizeCustomEmotionLabel(value) {
   }
 
   return label;
+}
+
+function normalizeNickname(value) {
+  const nickname = cleanText(value).replace(/\s+/g, " ");
+
+  if (!nickname) {
+    throw validationError("닉네임을 입력해주세요.");
+  }
+
+  if (nickname.length > maxNicknameLength) {
+    throw validationError("조금 더 짧게 적어주세요.");
+  }
+
+  return nickname;
+}
+
+function fallbackNickname() {
+  return "잔향 손님";
+}
+
+function normalizeBoolean(value) {
+  return value === true || value === "true" || value === "1" || value === "on";
 }
 
 function isDefaultEmotionValue(label) {

@@ -95,6 +95,7 @@ async function renderRoute() {
   }
 
   if (!currentUser && (
+    pathname === "/account" ||
     pathname === "/logs/new" ||
     pathname === "/logs" ||
     pathname === "/records" ||
@@ -105,6 +106,11 @@ async function renderRoute() {
     reflectionEditMatch
   )) {
     renderAuthPrompt();
+    return;
+  }
+
+  if (pathname === "/account") {
+    await renderAccount();
     return;
   }
 
@@ -318,6 +324,69 @@ function renderAuthPrompt() {
   `;
 }
 
+async function renderAccount() {
+  let profile = currentUser?.profile ?? null;
+
+  try {
+    const response = await api("/api/profile");
+    profile = response.profile;
+  } catch {
+    profile = currentUser?.profile ?? null;
+  }
+
+  app.innerHTML = `
+    <section class="auth-panel account-panel">
+      <p class="eyebrow">내 계정</p>
+      <h1>내 계정</h1>
+      <p class="page-description">잔향에서 보일 이름을 정해주세요.</p>
+      <form id="accountForm" class="auth-form">
+        <div class="field">
+          <label for="nickname">닉네임</label>
+          <input id="nickname" name="nickname" type="text" maxlength="20" autocomplete="nickname" placeholder="닉네임을 입력하세요" value="${escapeHtml(profile?.nickname ?? "")}" required>
+        </div>
+        <div class="form-footer">
+          <p id="accountError" class="error" role="alert"></p>
+          <button class="button" type="submit">저장하기</button>
+        </div>
+      </form>
+      <p id="accountNotice" class="notice" aria-live="polite"></p>
+    </section>
+  `;
+
+  const form = document.querySelector("#accountForm");
+  const errorBox = document.querySelector("#accountError");
+  const notice = document.querySelector("#accountNotice");
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    errorBox.textContent = "";
+    notice.textContent = "";
+
+    const formData = new FormData(form);
+
+    try {
+      const { profile: updatedProfile, user } = await api("/api/profile", {
+        method: "PATCH",
+        body: JSON.stringify({ nickname: formData.get("nickname") })
+      });
+
+      currentUser = user ?? {
+        ...currentUser,
+        nickname: updatedProfile?.nickname ?? "",
+        profile: updatedProfile ?? null
+      };
+      authSession = authSession ? { ...authSession, user: currentUser } : authSession;
+      if (authSession) {
+        window.localStorage.setItem(authStorageKey, JSON.stringify(authSession));
+      }
+      renderNavigation();
+      notice.textContent = "닉네임을 저장했어요.";
+    } catch (error) {
+      errorBox.textContent = error.message;
+    }
+  });
+}
+
 async function renderNewLog() {
   let selectedSong = null;
 
@@ -352,6 +421,7 @@ async function renderNewLog() {
           <label for="listenedAt">들은 날</label>
           <input id="listenedAt" name="listenedAt" type="date" value="${today()}">
         </div>
+        ${renderAnonymousToggle()}
         <div class="manual-section">
           <p class="panel-kicker">직접 입력</p>
           <p class="helper-copy">찾는 노래가 없다면 아래에 조용히 적어주세요.</p>
@@ -454,6 +524,7 @@ async function renderNewLog() {
       songId: selectedSong?.id && !selectedSong.externalId ? selectedSong.id : "",
       song: selectedSong ? songPayload(selectedSong) : manualSong,
       emotionIds: formData.getAll("emotion"),
+      isAnonymous: formData.get("isAnonymous") === "on",
       listenedAt: formData.get("listenedAt"),
       note: formData.get("note")
     };
@@ -526,6 +597,7 @@ async function renderNewReflection() {
           <label for="listenedAt">들은 날</label>
           <input id="listenedAt" name="listenedAt" type="date" value="${today()}">
         </div>
+        ${renderAnonymousToggle()}
         <div class="manual-section">
           <p class="panel-kicker">직접 입력</p>
           <p class="helper-copy">찾는 노래가 없다면 아래에 조용히 적어주세요.</p>
@@ -628,6 +700,7 @@ async function renderNewReflection() {
       songId: selectedSong?.id && !selectedSong.externalId ? selectedSong.id : "",
       song: selectedSong ? songPayload(selectedSong) : manualSong,
       emotionIds: formData.getAll("emotion"),
+      isAnonymous: formData.get("isAnonymous") === "on",
       listenedAt: formData.get("listenedAt"),
       title: formData.get("title"),
       body: formData.get("body")
@@ -827,6 +900,7 @@ async function renderEditLog(id) {
             <label for="listenedAt">들은 날</label>
             <input id="listenedAt" name="listenedAt" type="date" value="${escapeHtml(log.listenedAt)}">
           </div>
+          ${renderAnonymousToggle(log.isAnonymous)}
           <div class="form-footer">
             <p id="formError" class="error" role="alert"></p>
             <button class="button" type="submit">수정하기</button>
@@ -851,6 +925,7 @@ async function renderEditLog(id) {
           method: "PATCH",
           body: JSON.stringify({
             emotionIds: formData.getAll("emotion"),
+            isAnonymous: formData.get("isAnonymous") === "on",
             listenedAt: formData.get("listenedAt"),
             note: formData.get("note")
           })
@@ -911,6 +986,7 @@ async function renderEditReflection(id) {
             <label for="listenedAt">들은 날</label>
             <input id="listenedAt" name="listenedAt" type="date" value="${escapeHtml(reflection.listenedAt)}">
           </div>
+          ${renderAnonymousToggle(reflection.isAnonymous)}
           <div class="form-footer">
             <p id="formError" class="error" role="alert"></p>
             <button class="button" type="submit">수정하기</button>
@@ -936,6 +1012,7 @@ async function renderEditReflection(id) {
           body: JSON.stringify({
             body: formData.get("body"),
             emotionIds: formData.getAll("emotion"),
+            isAnonymous: formData.get("isAnonymous") === "on",
             listenedAt: formData.get("listenedAt"),
             title: formData.get("title")
           })
@@ -1029,6 +1106,7 @@ async function renderReflectionDetail(id) {
         <a class="back-link" href="/songs/${encodeURIComponent(reflection.song.id)}" data-link>노래의 기록으로</a>
         <div class="detail-meta">
           <p class="eyebrow">${formatDate(reflection.listenedAt)}</p>
+          <p class="detail-author">${escapeHtml(reflection.authorLabel ?? "누군가의 여음")}</p>
           <div class="detail-song">
             <span class="song-disc" aria-hidden="true">${escapeHtml(songInitial(reflection.song))}</span>
             <div>
@@ -1082,13 +1160,15 @@ async function renderReflectionDetail(id) {
 }
 
 function renderNavigation() {
+  const accountLabel = accountDisplayName();
+
   nav.innerHTML = currentUser
     ? `
       <a href="/" data-link>홈</a>
       <a href="/logs/new" data-link>잔향 남기기</a>
       <a href="/reflections/new" data-link>여음 남기기</a>
       <a href="/records" data-link>내 기록</a>
-      <span class="account-pill" title="${escapeHtml(currentUser.email)}">${escapeHtml(currentUser.email)}</span>
+      <a class="account-pill" href="/account" data-link title="${escapeHtml(accountLabel)}">${escapeHtml(accountLabel)}</a>
       <button class="nav-logout" type="button" data-logout>로그아웃</button>
     `
     : `
@@ -1098,6 +1178,10 @@ function renderNavigation() {
     `;
   navLinks = [...nav.querySelectorAll("a[data-link]")];
   setCurrentNav(window.location.pathname);
+}
+
+function accountDisplayName() {
+  return currentUser?.nickname || currentUser?.profile?.nickname || "닉네임 설정";
 }
 
 function renderHomeSigninNote() {
@@ -1147,6 +1231,7 @@ function renderRecentRecordCards(records) {
           <a class="log-card recent-record-card${isReflection ? " reflection-card" : ""}" href="${href}" data-link>
             <div class="recent-card-meta">
               <span class="record-type-pill">${escapeHtml(record.type)}</span>
+              <span class="record-author">${escapeHtml(record.authorLabel ?? (isReflection ? "누군가의 여음" : "누군가의 잔향"))}</span>
               <span class="log-date">${formatRecordDate(record)}</span>
             </div>
             ${isReflection && record.title ? `<h3>${escapeHtml(record.title)}</h3>` : ""}
@@ -1398,6 +1483,18 @@ function renderSongResult(song) {
         <small>${escapeHtml(song.artist)}${renderSongMeta(song)}</small>
       </span>
     </button>
+  `;
+}
+
+function renderAnonymousToggle(isAnonymous = false) {
+  return `
+    <div class="field anonymous-field">
+      <label class="checkbox-line">
+        <input class="anonymous-checkbox" type="checkbox" name="isAnonymous"${isAnonymous ? " checked" : ""}>
+        <span>익명으로 남기기</span>
+      </label>
+      <p class="helper-copy">켜두면 공개 화면에서 닉네임이 보이지 않아요.</p>
+    </div>
   `;
 }
 
