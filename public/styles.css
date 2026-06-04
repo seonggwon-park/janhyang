@@ -238,7 +238,8 @@ h2 {
 }
 
 .lead,
-.page-description {
+.page-description,
+.section-description {
   max-width: 620px;
   color: var(--muted);
   font-size: 18px;
@@ -449,6 +450,15 @@ h2 {
   gap: 18px;
 }
 
+.section-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.section-copy .section-description {
+  margin-bottom: 8px;
+}
+
 .section-head,
 .page-head {
   display: flex;
@@ -534,6 +544,31 @@ h2 {
 .log-date {
   color: var(--soft);
   font-size: 12px;
+}
+
+.recent-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.record-type-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 4px 10px;
+  border: 1px solid rgba(184, 121, 112, 0.16);
+  border-radius: 999px;
+  color: #8b5d54;
+  background: rgba(255, 250, 243, 0.72);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.recent-record-card .note-preview {
+  margin-top: 18px;
 }
 
 .note-preview {
@@ -900,9 +935,8 @@ a.song-title:hover,
 }
 
 .emotion-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 9px;
+  display: grid;
+  gap: 10px;
   margin: 0 0 22px;
   padding: 0;
   border: 0;
@@ -911,6 +945,12 @@ a.song-title:hover,
 .emotion-options legend {
   width: 100%;
   margin-bottom: 4px;
+}
+
+.emotion-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
 }
 
 .emotion-option {
@@ -956,6 +996,40 @@ a.song-title:hover,
 .emotion-option input:focus-visible + span {
   outline: 2px solid rgba(169, 104, 74, 0.42);
   outline-offset: 2px;
+}
+
+.custom-emotion-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 430px;
+  margin-top: 4px;
+}
+
+.custom-emotion-add input {
+  flex: 1 1 180px;
+  min-height: 42px;
+  padding: 9px 13px;
+  border: 1px solid rgba(92, 76, 62, 0.13);
+  border-radius: 8px;
+  color: var(--ink);
+  background: rgba(255, 252, 247, 0.66);
+}
+
+.custom-emotion-add input:focus {
+  border-color: rgba(169, 104, 74, 0.38);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(169, 104, 74, 0.09);
+}
+
+.custom-emotion-add .ghost-button {
+  min-height: 42px;
+  padding: 9px 14px;
+}
+
+.custom-emotion-error {
+  min-height: 18px;
+  font-size: 13px;
 }
 
 .form-footer {

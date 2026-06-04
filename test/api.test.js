@@ -65,6 +65,12 @@ test("starts with no saved songs", async () => {
   assert.deepEqual(body.songs, []);
 });
 
+test("public recent records starts empty", async () => {
+  const body = await request("/api/records/recent", {}, null);
+
+  assert.deepEqual(body.records, []);
+});
+
 test("empty external song search query returns empty results", async () => {
   searchCalls = 0;
 
@@ -171,6 +177,17 @@ test("creates and reads a music log with a manual song for the current user", as
   assert.equal(detail.log.note, "소리가 가라앉고 마음에 남았다.");
 });
 
+test("public recent records works when only logs exist", async () => {
+  const body = await request("/api/records/recent", {}, null);
+
+  assert.equal(body.records.length, 1);
+  assert.equal(body.records[0].type, "잔향");
+  assert.equal(body.records[0].recordType, "log");
+  assert.equal(body.records[0].note, "소리가 가라앉고 마음에 남았다.");
+  assert.equal(body.records[0].song.title, "안녕의 여운");
+  assert.equal("userId" in body.records[0], false);
+});
+
 test("creates and reads a long reflection with a manual song for the current user", async () => {
   const created = await request("/api/reflections", {
     body: JSON.stringify({
@@ -195,6 +212,109 @@ test("creates and reads a long reflection with a manual song for the current use
 
   const detail = await request(`/api/reflections/${encodeURIComponent(created.reflection.id)}`);
   assert.match(detail.reflection.body, /오래 남는 장면/);
+});
+
+test("public recent records combines logs and reflections newest first", async () => {
+  const body = await request("/api/records/recent", {}, null);
+
+  assert.equal(body.records.length, 2);
+  assert.deepEqual(body.records.map((record) => record.type), ["여음", "잔향"]);
+  assert.equal(body.records[0].title, "오래 남은 밤");
+  assert.match(body.records[0].body, /짧게 지나가지 않는 마음/);
+  assert.equal(body.records[1].note, "소리가 가라앉고 마음에 남았다.");
+});
+
+test("public recent records works when only reflections exist", async () => {
+  const supabase = createMockSupabase([userA]);
+  const database = createDatabase({
+    fetchImpl: supabase.fetch,
+    supabaseKey: "test-service-role-key",
+    supabaseUrl: "https://example.supabase.co"
+  });
+
+  await database.createReflection({
+    body: "여음만 남겨진 조용한 홈 상태.",
+    emotionIds: ["calm"],
+    listenedAt: "2026-06-04",
+    song: {
+      artist: "테스트 아티스트",
+      title: "여음만 있는 노래"
+    },
+    title: "여음만 있는 날"
+  }, publicUser(userA));
+
+  const records = await database.listPublicRecentRecords(6, null);
+
+  assert.equal(records.length, 1);
+  assert.equal(records[0].type, "여음");
+  assert.equal(records[0].recordType, "reflection");
+  assert.equal(records[0].song.title, "여음만 있는 노래");
+  assert.equal("userId" in records[0], false);
+});
+
+test("authenticated users can add private custom emotions and save them on records", async () => {
+  const createdEmotion = await request("/api/user-emotions", {
+    body: JSON.stringify({ label: "쓸쓸함" }),
+    method: "POST"
+  });
+  const duplicate = await rawRequest("/api/user-emotions", {
+    body: JSON.stringify({ label: "쓸쓸함" }),
+    method: "POST"
+  });
+  const empty = await rawRequest("/api/user-emotions", {
+    body: JSON.stringify({ label: "   " }),
+    method: "POST"
+  });
+  const tooLong = await rawRequest("/api/user-emotions", {
+    body: JSON.stringify({ label: "가나다라마바사아자차카타파하가나다라마바사아자차카" }),
+    method: "POST"
+  });
+  const ownerEmotions = await request("/api/emotions");
+  const otherEmotions = await request("/api/emotions", {}, userBToken);
+
+  assert.equal(createdEmotion.emotion.label, "쓸쓸함");
+  assert.equal(createdEmotion.emotion.custom, true);
+  assert.equal(duplicate.status, 400);
+  assert.equal(duplicate.body.error, "이미 추가한 감정이에요.");
+  assert.equal(empty.status, 400);
+  assert.equal(empty.body.error, "감정을 입력해주세요.");
+  assert.equal(tooLong.status, 400);
+  assert.equal(tooLong.body.error, "조금 더 짧게 적어주세요.");
+  assert.ok(ownerEmotions.emotions.some((emotion) => emotion.label === "쓸쓸함"));
+  assert.equal(otherEmotions.emotions.some((emotion) => emotion.label === "쓸쓸함"), false);
+
+  const customLog = await request("/api/logs", {
+    body: JSON.stringify({
+      emotionIds: ["쓸쓸함"],
+      listenedAt: "2026-06-04",
+      note: "낯선 감정이 그대로 남았다.",
+      song: {
+        artist: "테스트 아티스트",
+        title: "쓸쓸한 노래"
+      }
+    }),
+    method: "POST"
+  });
+  const customReflection = await request("/api/reflections", {
+    body: JSON.stringify({
+      body: "쓸쓸함을 길게 적어둔 여음.",
+      emotionIds: ["쓸쓸함"],
+      listenedAt: "2026-06-04",
+      song: externalSong(),
+      title: "쓸쓸한 여음"
+    }),
+    method: "POST"
+  });
+  const publicLogSong = await request(`/api/songs/${encodeURIComponent(customLog.log.song.id)}`, {}, null);
+  const publicReflectionSong = await request(`/api/songs/${encodeURIComponent(customReflection.reflection.song.id)}`, {}, null);
+
+  assert.deepEqual(customLog.log.emotions.map((emotion) => emotion.label), ["쓸쓸함"]);
+  assert.deepEqual(customReflection.reflection.emotions.map((emotion) => emotion.label), ["쓸쓸함"]);
+  assert.equal(publicLogSong.logs.find((log) => log.id === customLog.log.id).emotions[0].label, "쓸쓸함");
+  assert.equal(
+    publicReflectionSong.reflections.find((reflection) => reflection.id === customReflection.reflection.id).emotions[0].label,
+    "쓸쓸함"
+  );
 });
 
 test("only returns logs owned by the authenticated user", async () => {
@@ -421,10 +541,13 @@ function createMockSupabase(seedUsers = []) {
     nextReflectionId: 1,
     nextLogId: 1,
     nextSongId: 1,
+    nextTimestamp: Date.parse("2026-06-04T00:00:00.000Z"),
     nextTokenId: 1,
+    nextUserEmotionId: 1,
     reflections: [],
     sessions: new Map(),
     songs: [],
+    userEmotions: [],
     users: seedUsers.map((user) => ({ ...user }))
   };
 
@@ -444,7 +567,7 @@ function createMockSupabase(seedUsers = []) {
 
       if (options.method === "POST" && table === "songs") {
         const rows = JSON.parse(options.body).map((song) => {
-          const now = new Date().toISOString();
+          const now = nextTimestamp(state);
           const row = {
             created_at: now,
             id: `00000000-0000-4000-8000-${String(state.nextSongId++).padStart(12, "0")}`,
@@ -460,7 +583,7 @@ function createMockSupabase(seedUsers = []) {
 
       if (options.method === "POST" && table === "music_logs") {
         const rows = JSON.parse(options.body).map((log) => {
-          const now = new Date().toISOString();
+          const now = nextTimestamp(state);
           const row = {
             created_at: now,
             id: `10000000-0000-4000-8000-${String(state.nextLogId++).padStart(12, "0")}`,
@@ -476,7 +599,7 @@ function createMockSupabase(seedUsers = []) {
 
       if (options.method === "POST" && table === "music_reflections") {
         const rows = JSON.parse(options.body).map((reflection) => {
-          const now = new Date().toISOString();
+          const now = nextTimestamp(state);
           const row = {
             created_at: now,
             id: `20000000-0000-4000-8000-${String(state.nextReflectionId++).padStart(12, "0")}`,
@@ -490,10 +613,25 @@ function createMockSupabase(seedUsers = []) {
         return jsonResponse(rows);
       }
 
+      if (options.method === "POST" && table === "user_emotions") {
+        const rows = JSON.parse(options.body).map((emotion) => {
+          const now = nextTimestamp(state);
+          const row = {
+            created_at: now,
+            id: `30000000-0000-4000-8000-${String(state.nextUserEmotionId++).padStart(12, "0")}`,
+            ...emotion
+          };
+          state.userEmotions.push(row);
+          return row;
+        });
+
+        return jsonResponse(rows);
+      }
+
       if ((options.method === "PATCH" || options.method === "PUT") && table === "music_logs") {
         const patch = JSON.parse(options.body);
         const rows = applyFilters(state.logs, requestUrl).map((log) => {
-          Object.assign(log, patch, { updated_at: new Date().toISOString() });
+          Object.assign(log, patch, { updated_at: nextTimestamp(state) });
           return log;
         });
 
@@ -503,7 +641,7 @@ function createMockSupabase(seedUsers = []) {
       if ((options.method === "PATCH" || options.method === "PUT") && table === "music_reflections") {
         const patch = JSON.parse(options.body);
         const rows = applyFilters(state.reflections, requestUrl).map((reflection) => {
-          Object.assign(reflection, patch, { updated_at: new Date().toISOString() });
+          Object.assign(reflection, patch, { updated_at: nextTimestamp(state) });
           return reflection;
         });
 
@@ -542,6 +680,10 @@ function createMockSupabase(seedUsers = []) {
         }));
 
         return jsonResponse(rows);
+      }
+
+      if (table === "user_emotions") {
+        return jsonResponse(applyFilters(state.userEmotions, requestUrl));
       }
 
       return jsonResponse({ error: "not found" }, 404);
@@ -605,6 +747,12 @@ function createSession(state, user) {
     refresh_token: `refresh-${token}`,
     user: publicUser(user)
   };
+}
+
+function nextTimestamp(state) {
+  const timestamp = new Date(state.nextTimestamp).toISOString();
+  state.nextTimestamp += 1000;
+  return timestamp;
 }
 
 function userFromToken(state, options) {

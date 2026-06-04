@@ -40,6 +40,18 @@ create table if not exists public.music_reflections (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.user_emotions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  label text not null,
+  created_at timestamptz not null default now(),
+  constraint user_emotions_label_length_check
+    check (char_length(btrim(label)) between 1 and 24)
+);
+
+create unique index if not exists user_emotions_user_label_unique
+  on public.user_emotions (user_id, lower(btrim(label)));
+
 alter table public.music_logs
   add column if not exists user_id uuid references auth.users(id) on delete cascade;
 
@@ -71,6 +83,9 @@ create index if not exists music_reflections_song_id_idx
 create index if not exists music_reflections_user_created_at_idx
   on public.music_reflections (user_id, created_at desc);
 
+create index if not exists user_emotions_user_created_at_idx
+  on public.user_emotions (user_id, created_at asc);
+
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -98,6 +113,7 @@ for each row execute function public.set_updated_at();
 
 alter table public.music_logs enable row level security;
 alter table public.music_reflections enable row level security;
+alter table public.user_emotions enable row level security;
 
 drop policy if exists music_logs_select_own on public.music_logs;
 create policy music_logs_select_own
@@ -153,6 +169,35 @@ with check (user_id = auth.uid());
 drop policy if exists music_reflections_delete_own on public.music_reflections;
 create policy music_reflections_delete_own
 on public.music_reflections
+for delete
+to authenticated
+using (user_id = auth.uid());
+
+drop policy if exists user_emotions_select_own on public.user_emotions;
+create policy user_emotions_select_own
+on public.user_emotions
+for select
+to authenticated
+using (user_id = auth.uid());
+
+drop policy if exists user_emotions_insert_own on public.user_emotions;
+create policy user_emotions_insert_own
+on public.user_emotions
+for insert
+to authenticated
+with check (user_id = auth.uid());
+
+drop policy if exists user_emotions_update_own on public.user_emotions;
+create policy user_emotions_update_own
+on public.user_emotions
+for update
+to authenticated
+using (user_id = auth.uid())
+with check (user_id = auth.uid());
+
+drop policy if exists user_emotions_delete_own on public.user_emotions;
+create policy user_emotions_delete_own
+on public.user_emotions
 for delete
 to authenticated
 using (user_id = auth.uid());

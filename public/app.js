@@ -37,8 +37,7 @@ async function init() {
   app.innerHTML = `<div class="loading">불러오는 중</div>`;
 
   try {
-    const response = await api("/api/emotions");
-    emotions = response.emotions;
+    await loadEmotions();
     await loadCurrentUser();
     renderNavigation();
     await renderRoute();
@@ -147,8 +146,10 @@ async function renderRoute() {
 }
 
 async function renderHome() {
-  const logs = currentUser ? (await api("/api/logs")).logs : [];
-  const recentLogs = logs.slice(0, 3);
+  const [{ logs }, { records: recentRecords }] = await Promise.all([
+    currentUser ? api("/api/logs") : Promise.resolve({ logs: [] }),
+    api("/api/records/recent?limit=6")
+  ]);
   const uniqueSongCount = new Set(logs.map((log) => log.song.id)).size;
   const emotionCount = logs.reduce((total, log) => total + log.emotions.length, 0);
 
@@ -175,12 +176,13 @@ async function renderHome() {
         <p>마음에 오래 남은 노래를 나만의 작은 기록으로.</p>
       </div>
     </section>
-    <section class="recent-section" aria-label="최근 잔향">
-      <div class="section-head">
-        <p class="eyebrow">최근의 잔향</p>
-        <h2>조용히 덮인 감정들</h2>
+    <section class="recent-section" aria-label="최근 남겨진 감정들">
+      <div class="section-copy">
+        <p class="eyebrow">최근의 기록</p>
+        <h2>최근 남겨진 감정들</h2>
+        <p class="section-description">짧게 남은 잔향과 오래 머문 여음을 함께 둘러보세요.</p>
       </div>
-      ${recentLogs.length ? renderLogCards(recentLogs) : renderEmpty(currentUser ? "아직 남겨둔 잔향이 없어요." : "로그인하면 나만의 잔향이 여기에 모여요.")}
+      ${recentRecords.length ? renderRecentRecordCards(recentRecords) : renderEmpty("아직 남겨진 감정이 없어요. 마음에 남은 노래가 생기면 잔향이나 여음으로 남겨보세요.")}
     </section>
   `;
 }
@@ -237,6 +239,7 @@ function renderAuthPage(mode) {
 
       if (session.accessToken) {
         setSession(session);
+        await loadEmotions();
         navigate(isSignup ? "/logs/new" : "/logs");
         return;
       }
@@ -290,8 +293,7 @@ async function renderNewLog() {
           <textarea id="note" name="note" maxlength="240" required placeholder="이 노래는 어떤 장면으로 남았나요?"></textarea>
         </div>
         <fieldset class="field emotion-options">
-          <legend>남은 감정</legend>
-          ${emotions.map(renderEmotionOption).join("")}
+          ${renderEmotionPicker()}
         </fieldset>
         <div class="field date-field">
           <label for="listenedAt">들은 날</label>
@@ -336,6 +338,7 @@ async function renderNewLog() {
   const errorBox = document.querySelector("#formError");
 
   renderSongSearchIdle(results);
+  bindCustomEmotionAdd(form);
 
   selectedSong = await initialSongFromQuery();
 
@@ -464,8 +467,7 @@ async function renderNewReflection() {
           <textarea id="body" name="body" required placeholder="이 노래가 오래 남은 이유를 천천히 적어보세요."></textarea>
         </div>
         <fieldset class="field emotion-options">
-          <legend>남은 감정</legend>
-          ${emotions.map(renderEmotionOption).join("")}
+          ${renderEmotionPicker()}
         </fieldset>
         <div class="field date-field">
           <label for="listenedAt">들은 날</label>
@@ -510,6 +512,7 @@ async function renderNewReflection() {
   const errorBox = document.querySelector("#formError");
 
   renderSongSearchIdle(results);
+  bindCustomEmotionAdd(form);
 
   selectedSong = await initialSongFromQuery();
 
@@ -765,8 +768,7 @@ async function renderEditLog(id) {
             <textarea id="note" name="note" maxlength="240" required placeholder="이 노래는 어떤 장면으로 남았나요?">${escapeHtml(log.note)}</textarea>
           </div>
           <fieldset class="field emotion-options">
-            <legend>남은 감정</legend>
-            ${emotions.map((emotion) => renderEmotionOption(emotion, log.emotionIds)).join("")}
+            ${renderEmotionPicker(log.emotionIds)}
           </fieldset>
           <div class="field date-field">
             <label for="listenedAt">들은 날</label>
@@ -783,6 +785,7 @@ async function renderEditLog(id) {
     const form = document.querySelector("#editLogForm");
     const errorBox = document.querySelector("#formError");
     bindEmotionLimit(form, errorBox);
+    bindCustomEmotionAdd(form);
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -849,8 +852,7 @@ async function renderEditReflection(id) {
             <textarea id="body" name="body" required placeholder="이 노래가 오래 남은 이유를 천천히 적어보세요.">${escapeHtml(reflection.body)}</textarea>
           </div>
           <fieldset class="field emotion-options">
-            <legend>남은 감정</legend>
-            ${emotions.map((emotion) => renderEmotionOption(emotion, reflection.emotionIds)).join("")}
+            ${renderEmotionPicker(reflection.emotionIds)}
           </fieldset>
           <div class="field date-field">
             <label for="listenedAt">들은 날</label>
@@ -867,6 +869,7 @@ async function renderEditReflection(id) {
     const form = document.querySelector("#editReflectionForm");
     const errorBox = document.querySelector("#formError");
     bindEmotionLimit(form, errorBox);
+    bindCustomEmotionAdd(form);
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -1048,6 +1051,38 @@ function renderHomeSigninNote() {
   return `<p class="home-signin-note">내 잔향을 보려면 로그인이 필요해요.</p>`;
 }
 
+function renderRecentRecordCards(records) {
+  return `
+    <div class="log-list recent-record-list">
+      ${records.map((record) => {
+        const isReflection = record.recordType === "reflection";
+        const preview = isReflection ? previewLongText(record.body) : previewNote(record.note);
+        const href = `/songs/${encodeURIComponent(record.song.id)}`;
+
+        return `
+          <a class="log-card recent-record-card${isReflection ? " reflection-card" : ""}" href="${href}" data-link>
+            <div class="recent-card-meta">
+              <span class="record-type-pill">${escapeHtml(record.type)}</span>
+              <span class="log-date">${formatRecordDate(record)}</span>
+            </div>
+            ${isReflection && record.title ? `<h3>${escapeHtml(record.title)}</h3>` : ""}
+            <p class="note-preview">${escapeHtml(preview)}</p>
+            <div class="song-line">
+              <span>
+                <span class="song-title">${escapeHtml(record.song.title)}</span>
+                <span class="song-meta">${escapeHtml(record.song.artist)}${renderSongMeta(record.song)}</span>
+              </span>
+            </div>
+            <div class="emotion-row">
+              ${record.emotions.map((emotion) => `<span class="tag">${escapeHtml(emotion.label)}</span>`).join("")}
+            </div>
+          </a>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
 function renderLogCards(logs) {
   return `
     <div class="log-list">
@@ -1202,6 +1237,20 @@ function renderSongResult(song) {
   `;
 }
 
+function renderEmotionPicker(selectedIds = []) {
+  return `
+    <legend>남은 감정</legend>
+    <div class="emotion-chip-list">
+      ${emotions.map((emotion) => renderEmotionOption(emotion, selectedIds)).join("")}
+    </div>
+    <div class="custom-emotion-add">
+      <input type="text" autocomplete="off" maxlength="24" placeholder="감정 키워드 추가" data-custom-emotion-input>
+      <button class="ghost-button" type="button" data-add-custom-emotion>추가</button>
+    </div>
+    <p class="error custom-emotion-error" role="alert" data-custom-emotion-error></p>
+  `;
+}
+
 function renderEmotionOption(emotion, selectedIds = []) {
   const checked = selectedIds.includes(emotion.id) ? " checked" : "";
 
@@ -1326,6 +1375,70 @@ function bindEmotionLimit(form, errorBox) {
   });
 }
 
+function bindCustomEmotionAdd(form) {
+  const button = form.querySelector("[data-add-custom-emotion]");
+  const input = form.querySelector("[data-custom-emotion-input]");
+  const errorBox = form.querySelector("[data-custom-emotion-error]");
+
+  if (!button || !input || !errorBox) {
+    return;
+  }
+
+  const addEmotion = async () => {
+    const label = input.value.trim().replace(/\s+/g, " ");
+    errorBox.textContent = "";
+
+    if (!label) {
+      errorBox.textContent = "감정을 입력해주세요.";
+      return;
+    }
+
+    if (label.length > 24) {
+      errorBox.textContent = "조금 더 짧게 적어주세요.";
+      return;
+    }
+
+    if (emotions.some((emotion) => emotion.id === label || emotion.label === label)) {
+      errorBox.textContent = "이미 추가한 감정이에요.";
+      return;
+    }
+
+    try {
+      const { emotion } = await api("/api/user-emotions", {
+        method: "POST",
+        body: JSON.stringify({ label })
+      });
+
+      if (!emotions.some((item) => item.id === emotion.id || item.label === emotion.label)) {
+        emotions = [...emotions, emotion];
+      }
+
+      renderEmotionPickerInto(form);
+    } catch (error) {
+      errorBox.textContent = error.message;
+    }
+  };
+
+  button.addEventListener("click", addEmotion);
+  input.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+
+    event.preventDefault();
+    addEmotion();
+  });
+}
+
+function renderEmotionPickerInto(form) {
+  const fieldset = form.querySelector(".emotion-options");
+  const selectedIds = [...form.querySelectorAll('input[name="emotion"]:checked')].map((input) => input.value);
+
+  fieldset.innerHTML = renderEmotionPicker(selectedIds);
+  bindCustomEmotionAdd(form);
+  fieldset.querySelector("[data-custom-emotion-input]")?.focus();
+}
+
 function ownsRecord(record) {
   return Boolean(currentUser?.id && record?.userId === currentUser.id);
 }
@@ -1366,11 +1479,17 @@ async function loadCurrentUser() {
   }
 }
 
+async function loadEmotions() {
+  const response = await api("/api/emotions");
+  emotions = response.emotions;
+}
+
 async function logout() {
   try {
     await api("/api/auth/logout", { method: "POST" });
   } finally {
     clearSession();
+    await loadEmotions();
     navigate("/");
   }
 }

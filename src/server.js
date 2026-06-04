@@ -3,7 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createAuthService, bearerToken } from "./auth.js";
-import { createDatabase, emotions } from "./db.js";
+import { createDatabase } from "./db.js";
 import { searchExternalSongs } from "./songSearch.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -86,7 +86,8 @@ async function handleApiRequest(request, response, requestUrl, auth, database, s
   }
 
   if (method === "GET" && pathname === "/api/emotions") {
-    sendJson(response, 200, { emotions });
+    const user = await optionalUser(auth, request);
+    sendJson(response, 200, { emotions: await database.listAvailableEmotions(user) });
     return;
   }
 
@@ -109,6 +110,14 @@ async function handleApiRequest(request, response, requestUrl, auth, database, s
 
   if (method === "GET" && pathname === "/api/auth/me") {
     sendJson(response, 200, { user: await auth.requireUser(request) });
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/user-emotions") {
+    const user = await auth.requireUser(request);
+    const body = await readJsonBody(request);
+    const emotion = await database.createUserEmotion(body, user);
+    sendJson(response, 201, { emotion });
     return;
   }
 
@@ -135,6 +144,13 @@ async function handleApiRequest(request, response, requestUrl, auth, database, s
     }
 
     sendJson(response, 200, { songs });
+    return;
+  }
+
+  if (method === "GET" && pathname === "/api/records/recent") {
+    const user = await optionalUser(auth, request);
+    const records = await database.listPublicRecentRecords(requestUrl.searchParams.get("limit") ?? 6, user);
+    sendJson(response, 200, { records });
     return;
   }
 
