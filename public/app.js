@@ -25,7 +25,7 @@ document.addEventListener("click", async (event) => {
   }
 
   event.preventDefault();
-  navigate(link.getAttribute("href"));
+  await navigate(link.getAttribute("href"));
 });
 
 window.addEventListener("popstate", renderRoute);
@@ -1443,9 +1443,10 @@ function ownsRecord(record) {
   return Boolean(currentUser?.id && record?.userId === currentUser.id);
 }
 
-function navigate(pathname) {
-  window.history.pushState({}, "", pathname);
-  renderRoute();
+async function navigate(href) {
+  const targetUrl = new URL(href, window.location.origin);
+  window.history.pushState({}, "", `${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`);
+  await renderRoute();
   app.focus({ preventScroll: true });
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
